@@ -175,6 +175,12 @@ macro_rules! impl_PoK_VC {
                 // bases[0]^responses[0] * bases[0]^responses[0] * ... bases[i]^responses[i] * commitment^challenge == random_commitment
                 // =>
                 // bases[0]^responses[0] * bases[0]^responses[0] * ... bases[i]^responses[i] * commitment^challenge * random_commitment^-1 == 1
+                if bases.len() != self.responses.len() {
+                    return Err(PSError::UnequalNoOfBasesExponents {
+                        bases: bases.len(),
+                        exponents: self.responses.len(),
+                    });
+                }
                 let mut points = $group_element_vec::from(bases);
                 let mut scalars = self.responses.clone();
                 points.push(commitment.clone());
