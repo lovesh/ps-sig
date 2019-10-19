@@ -5,6 +5,7 @@ authors = ["lovesh <lovesh.bond@gmail.com>"]
 edition = "2018"
 description = "Pointcheval Sanders signatures"
 license = "Apache-2.0"
+repository = "https://github.com/lovesh/ps-sig"
 
 [dependencies]
 rand = "0.6"
@@ -18,6 +19,6 @@ default-features = false
 features = ["bls381"]
 
 [features]
-default = ["G1G2"]
-G1G2 = []
-G2G1 = []
+default = ["SignatureG2"]
+SignatureG2 = []
+SignatureG1 = []

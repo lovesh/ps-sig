@@ -1,0 +1,9 @@
+language: rust
+rust:
+  - stable
+branches:
+  only:
+    - master
+script:
+  - cargo test --release --no-default-features --features SignatureG1
+  - cargo test --release --no-default-features --features SignatureG2

@@ -61,6 +61,7 @@ impl PoKOfSignature {
         sig: &Signature,
         vk: &Verkey,
         messages: &[FieldElement],
+        blindings: Option<&[FieldElement]>,
         revealed_msg_indices: HashSet<usize>,
     ) -> Result<Self, PSError> {
         for idx in &revealed_msg_indices {
@@ -71,6 +72,24 @@ impl PoKOfSignature {
             }
         }
         Signature::check_verkey_and_messages_compat(messages, vk)?;
+        let mut blindings: Vec<Option<&FieldElement>> = match blindings {
+            Some(b) => {
+                if (messages.len() - revealed_msg_indices.len()) != b.len() {
+                    return Err(PSError::GeneralError {
+                        msg: format!(
+                            "No of blindings {} not equal to number of hidden messages {}",
+                            b.len(),
+                            (messages.len() - revealed_msg_indices.len())
+                        ),
+                    });
+                }
+                b.iter().map(Some).collect()
+            }
+            None => (0..(messages.len() - revealed_msg_indices.len()))
+                .map(|_| None)
+                .collect(),
+        };
+
         let r = FieldElement::random();
         let t = FieldElement::random();
 
@@ -95,9 +114,11 @@ impl PoKOfSignature {
         let J = bases.multi_scalar_mul_const_time(&exponents).unwrap();
 
         // For proving knowledge of messages in J.
+        // Choose blinding for g_tilde randomly
+        blindings.insert(0, None);
         let mut committing = ProverCommittingOtherGroup::new();
         for b in bases.as_slice() {
-            committing.commit(b, None);
+            committing.commit(b, blindings.remove(0));
         }
         let committed = committing.finish();
 
@@ -287,13 +308,28 @@ mod tests {
         let sig = Signature::new(msgs.as_slice(), &sk, &vk).unwrap();
         assert!(sig.verify(msgs.as_slice(), &vk).unwrap());
 
-        let pok = PoKOfSignature::init(&sig, &vk, msgs.as_slice(), HashSet::new()).unwrap();
+        let pok = PoKOfSignature::init(&sig, &vk, msgs.as_slice(), None, HashSet::new()).unwrap();
 
         let chal = pok.pok_vc.gen_challenge(pok.J.to_bytes());
 
         let proof = pok.gen_proof(&chal).unwrap();
 
         assert!(proof.verify(&vk, HashMap::new(), &chal).unwrap());
+
+        // PoK with supplied blindings
+        let blindings = FieldElementVector::random(count_msgs);
+        let pok_1 = PoKOfSignature::init(
+            &sig,
+            &vk,
+            msgs.as_slice(),
+            Some(blindings.as_slice()),
+            HashSet::new(),
+        )
+            .unwrap();
+        let chal_1 = FieldElement::from_msg_hash(&pok_1.to_bytes());
+        let proof_1 = pok_1.gen_proof(&chal_1).unwrap();
+
+        assert!(proof_1.verify(&vk, HashMap::new(), &chal_1).unwrap());
     }
 
     #[test]
@@ -310,7 +346,7 @@ mod tests {
         revealed_msg_indices.insert(9);
 
         let pok =
-            PoKOfSignature::init(&sig, &vk, msgs.as_slice(), revealed_msg_indices.clone()).unwrap();
+            PoKOfSignature::init(&sig, &vk, msgs.as_slice(), None,revealed_msg_indices.clone()).unwrap();
 
         let chal = pok.pok_vc.gen_challenge(pok.J.to_bytes());
 
@@ -329,6 +365,110 @@ mod tests {
     }
 
     #[test]
+    fn test_PoK_multiple_sigs() {
+        // Prove knowledge of multiple signatures together (using the same challenge)
+        let count_msgs = 5;
+        let (sk, vk) = keygen(count_msgs, "test".as_bytes());
+
+        let msgs_1 = FieldElementVector::random(count_msgs);
+        let sig_1 = Signature::new(msgs_1.as_slice(), &sk, &vk).unwrap();
+        assert!(sig_1.verify(msgs_1.as_slice(), &vk).unwrap());
+
+        let msgs_2 = FieldElementVector::random(count_msgs);
+        let sig_2 = Signature::new(msgs_2.as_slice(), &sk, &vk).unwrap();
+        assert!(sig_2.verify(msgs_2.as_slice(), &vk).unwrap());
+
+        let pok_1 =
+            PoKOfSignature::init(&sig_1, &vk, msgs_1.as_slice(), None,HashSet::new()).unwrap();
+        let pok_2 =
+            PoKOfSignature::init(&sig_2, &vk, msgs_2.as_slice(), None,HashSet::new()).unwrap();
+
+        let mut chal_bytes = vec![];
+        chal_bytes.append(&mut pok_1.to_bytes());
+        chal_bytes.append(&mut pok_2.to_bytes());
+
+        let chal = FieldElement::from_msg_hash(&chal_bytes);
+
+        let proof_1 = pok_1.gen_proof(&chal).unwrap();
+        let proof_2 = pok_2.gen_proof(&chal).unwrap();
+
+        assert!(proof_1.verify(&vk, HashMap::new(), &chal).unwrap());
+        assert!(proof_2.verify(&vk, HashMap::new(), &chal).unwrap());
+    }
+
+    #[test]
+    fn test_PoK_multiple_sigs_with_same_msg() {
+        // Prove knowledge of multiple signatures and the equality of a specific message under both signatures.
+        // Knowledge of 2 signatures and their corresponding messages is being proven.
+        // 2nd message in the 1st signature and 5th message in the 2nd signature are to be proven equal without revealing them
+
+        let count_msgs = 5;
+        let (sk, vk) = keygen(count_msgs, "test".as_bytes());
+
+        let same_msg = FieldElement::random();
+        let mut msgs_1 = FieldElementVector::random(count_msgs - 1);
+        msgs_1.insert(1, same_msg.clone());
+        let sig_1 = Signature::new(msgs_1.as_slice(), &sk, &vk).unwrap();
+        assert!(sig_1.verify(msgs_1.as_slice(), &vk).unwrap());
+
+        let mut msgs_2 = FieldElementVector::random(count_msgs - 1);
+        msgs_2.insert(4, same_msg.clone());
+        let sig_2 = Signature::new(msgs_2.as_slice(), &sk, &vk).unwrap();
+        assert!(sig_2.verify(msgs_2.as_slice(), &vk).unwrap());
+
+        // A particular message is same
+        assert_eq!(msgs_1[1], msgs_2[4]);
+
+        let same_blinding = FieldElement::random();
+
+        let mut blindings_1 = FieldElementVector::random(count_msgs - 1);
+        blindings_1.insert(1, same_blinding.clone());
+
+        let mut blindings_2 = FieldElementVector::random(count_msgs - 1);
+        blindings_2.insert(4, same_blinding.clone());
+
+        // Blinding for the same message is kept same
+        assert_eq!(blindings_1[1], blindings_2[4]);
+
+        let pok_1 = PoKOfSignature::init(
+            &sig_1,
+            &vk,
+            msgs_1.as_slice(),
+            Some(blindings_1.as_slice()),
+            HashSet::new(),
+        )
+            .unwrap();
+        let pok_2 = PoKOfSignature::init(
+            &sig_2,
+            &vk,
+            msgs_2.as_slice(),
+            Some(blindings_2.as_slice()),
+            HashSet::new(),
+        )
+            .unwrap();
+
+        let mut chal_bytes = vec![];
+        chal_bytes.append(&mut pok_1.to_bytes());
+        chal_bytes.append(&mut pok_2.to_bytes());
+
+        let chal = FieldElement::from_msg_hash(&chal_bytes);
+
+        let proof_1 = pok_1.gen_proof(&chal).unwrap();
+        let proof_2 = pok_2.gen_proof(&chal).unwrap();
+
+        // Response for the same message should be same (this check is made by the verifier)
+        // 1 added to the index, since 0th index is reserved for randomization (`t`)
+        // XXX: Does adding a `get_resp_for_message` to `proof` make sense to abstract this detail of +1.
+        assert_eq!(
+            proof_1.proof_vc.responses[1 + 1],
+            proof_2.proof_vc.responses[1 + 4]
+        );
+
+        assert!(proof_1.verify(&vk, HashMap::new(), &chal).unwrap());
+        assert!(proof_2.verify(&vk, HashMap::new(), &chal).unwrap());
+    }
+
+    #[test]
     fn timing_pok_signature() {
         // Measure time to prove knowledge of signatures, both generation and verification of proof
         let iterations = 100;
@@ -344,7 +484,7 @@ mod tests {
         for _ in 0..iterations {
             let start = Instant::now();
 
-            let pok = PoKOfSignature::init(&sig, &vk, msgs.as_slice(), HashSet::new()).unwrap();
+            let pok = PoKOfSignature::init(&sig, &vk, msgs.as_slice(), None, HashSet::new()).unwrap();
 
             let chal = pok.pok_vc.gen_challenge(pok.J.to_bytes());
 

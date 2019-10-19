@@ -39,7 +39,7 @@ pub fn keygen(count_messages: usize, label: &[u8]) -> (Sigkey, Verkey) {
     let mut Y_tilde = vec![];
     let X = &g * &x;
     let X_tilde = &g_tilde * &x;
-    for i in 0..count_messages {
+    for _ in 0..count_messages {
         // It is mandatory that all Y and Y_tilde have same discrete log wrt. g and g_tilde respectively.
         // But once Y and Y_tilde are generated, y is not needed.
         let y = FieldElement::random();
