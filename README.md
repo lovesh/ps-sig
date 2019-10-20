@@ -1,15 +1,42 @@
-[Short Randomizable signatures](https://eprint.iacr.org/2015/525) by David Pointcheval and Olivier Sanders.  
-Implementing signature scheme from section 6.1 of the paper as it allows for signing committed messages as well. 
+[Short Randomizable signatures](https://eprint.iacr.org/2015/525) by David Pointcheval and Olivier Sanders.
+Implements 2 variations as described in the paper in sections 4.2 and 6.1 respectively. Scheme in 6.1 was 
+presented to make blind signatures efficient however there are ways to do blind signatures with 4.2 but they 
+are relatively inefficient. One way to do so is described in [Coconut](https://arxiv.org/pdf/1802.07344.pdf).
+
+The signature scheme from section 4.2 does not allow blind signatures straightaway and the paper does not 
+describe any technique to do so. But less efficient techniques from Coconut or others can be used. The scheme 
+is implemented as described in the paper.  
+      
+      
+The signature scheme from section 6.1 of the paper allows for signing committed messages as well. 
 Demonstrated by test `test_sig_committed_messages`.  
 Implementing proof of knowledge of a signature from section 6.2 of paper. Demonstrated by test `test_PoK_sig`.  
 In addition to proof of knowledge, the user can also reveal some of the messages under the signature without revealing all messages or signature.
 Demonstrated in test `test_PoK_sig_reveal_messages`.  
 A more comprehensive test where a user gets signature over a mix of messages where some of them are known while 
 others are committed to and then a proof of knowledge is done for signature with selectively revealing some messages. 
-Demonstrated in the test `test_scenario_1`.  
-
+Demonstrated in the test `test_scenario_1`.
+2 variation of scheme in section 6.1 are implemented, one of the variations follows the paper as it is.   
+But another variations implemented with some modifications. The public key is split into 2 parts, the 
+tilde elements (X_tilde and Y_tilde) and non-tilde elements (X, Y). Now the verifier only needs the former 
+(tilde elements) and thus verifier's storage requirements go down. Keygen and signing are modified as:
+- Keygen: Rather than only keeping X as the secret key, signer keeps x, y_1, y_2, ..y_r as secret key. 
+The public key is unchanged, i.e. (g, Y_1, Y_2,..., Y_tilde_1, Y_tilde_2, ...)
+- Sign: Lets say the signer wants to sign a multi-message of 10 messages where only 1 message is blinded. 
+If we go by the paper where signer does not have y_1, y_2, .. y_10, signer will pick a random u and compute signature as 
+(g^u, (XC)^u.Y_2^u.Y_3^u...Y_10^u), Y_1 is omitted as the first message was blinded. Of course the term 
+(XC)^u.Y_2^u.Y_3^u...Y_10^u can be computed using efficient multi-exponentiation techniques but it would be more efficient 
+if the signer could instead compute (g^u, C^u.g^{(x+y_2+y_3+...y_10).u}). The resulting signature will have the same form 
+and can be unblinded in the same way as described in the paper.  
+This will make signer's secret key storage a bit more but will make the signing becomes more efficient, especially in cases 
+where the signature has only a few blinded messages but most messages are known to the signer which is usually the case with 
+anonymous credentials where the user's secret key is blinded (its not known to signer) in the signature. This variation makes 
+signing considerably faster unless the no of unblinded messages is very small compared to no of blinded messages. 
+Run test `timing_comparison_for_both_blind_signature_schemes` to see the difference 
   
-The groups for public key (*_tilde) and signatures can be flipped by compiling with feature `SignatureG2` or `SignatureG1`. These features are mutually exclusive. The default feature is `SignatureG1` meaning signatures are in group G1. 
+The groups for public key (*_tilde) and signatures can be swapped by compiling with feature `SignatureG2` or `SignatureG1`. 
+These features are mutually exclusive. The default feature is `SignatureG2` meaning signatures are in group G2 which 
+makes signing slower but proof of knowledge of signature faster.  
 
 To run tests with signature in group G1. The proof of knowledge of signatures will involve a multi-exponentiation in group G2.
 ```

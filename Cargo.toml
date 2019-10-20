@@ -1,6 +1,6 @@
 [package]
 name = "ps_sig"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["lovesh <lovesh.bond@gmail.com>"]
 edition = "2018"
 description = "Pointcheval Sanders signatures"
@@ -14,7 +14,7 @@ serde = "1.0"
 serde_derive = "1.0"
 
 [dependencies.amcl_wrapper]
-version = "0.1.6"
+version = "0.1.7"
 default-features = false
 features = ["bls381"]
 

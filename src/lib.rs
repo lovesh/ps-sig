@@ -53,8 +53,9 @@ extern crate serde;
 extern crate serde_derive;
 
 pub mod errors;
-pub mod keys;
 #[macro_use]
 pub mod pok_vc;
+pub mod keys;
 pub mod pok_sig;
 pub mod signature;
+pub mod blind_signature;
