@@ -16,6 +16,15 @@ pub struct BlindingKey {
 }
 
 impl BlindingKey {
+    pub fn new(sig_key: &Sigkey, params: &Params) -> Self {
+        let X = &params.g * &sig_key.x;
+        let mut Y = vec![];
+        for i in 0..sig_key.y.len() {
+            Y.push(&params.g * &sig_key.y[i]);
+        }
+        Self { X, Y }
+    }
+
     pub fn msg_count(&self) -> usize {
         self.Y.len()
     }
@@ -30,16 +39,6 @@ impl_PoK_VC!(
     SignatureGroupVec
 );
 
-/// Generate signing and verification keys
-pub fn generate_blinding_key(sig_key: &Sigkey, params: &Params) -> BlindingKey {
-    let X = &params.g * &sig_key.x;
-    let mut Y = vec![];
-    for i in 0..sig_key.y.len() {
-        Y.push(&params.g * &sig_key.y[i]);
-    }
-    BlindingKey { X, Y }
-}
-
 pub struct BlindSignature {}
 
 impl BlindSignature {
@@ -49,9 +48,9 @@ impl BlindSignature {
     /// The signing process differs slightly from the paper but results in the same signature. An example to illustrate the difference:
     /// Lets say the signer wants to sign a multi-message of 10 messages where only 1 message is blinded. 
     /// If we go by the paper where signer does not have y_1, y_2, .. y_10, signer will pick a random u and compute signature as 
-    /// (g^u, (XC)^u.Y_2^u.Y_3^u...Y_10^u), Y_1 is omitted as the first message was blinded. Of course the term 
+    /// (g^u, (XC)^u.Y_2^u.m_2.Y_3^u.m_3...Y_10^u.m_10), Y_1 is omitted as the first message was blinded. Of course the term
     /// (XC)^u.Y_2^u.Y_3^u...Y_10^u can be computed using efficient multi-exponentiation techniques but it would be more efficient 
-    /// if the signer could instead compute (g^u, C^u.g^{(x+y_2+y_3+...y_10).u}). The resulting signature will have the same form 
+    /// if the signer could instead compute (g^u, C^u.g^{(x+y_2.m_2+y_3.m_3+...y_10.m_10).u}). The resulting signature will have the same form
     /// and can be unblinded in the same way as described in the paper.
     pub fn new(
         commitment: &SignatureGroup,
@@ -61,15 +60,10 @@ impl BlindSignature {
         params: &Params,
     ) -> Result<Signature, PSError> {
         // There should be commitment to at least one message
-        if messages.len() >= blinding_key.Y.len() {
-            return Err(PSError::UnsupportedNoOfMessages {
-                expected: messages.len(),
-                given: blinding_key.Y.len(),
-            });
-        }
+        Self::check_blinding_key_and_messages_compat(messages, blinding_key)?;
 
         let u = FieldElement::random();
-        let offset = blinding_key.Y.len() - messages.len();
+        let offset = blinding_key.msg_count() - messages.len();
         let (sigma_1, mut sigma_2) = Signature::sign_with_sigma_1_generated_from_given_exp(
             messages, sigkey, &u, offset, &params.g,
         )?;
@@ -86,12 +80,7 @@ impl BlindSignature {
         params: &Params,
     ) -> Result<Signature, PSError> {
         // There should be commitment to at least one message
-        if messages.len() >= blinding_key.Y.len() {
-            return Err(PSError::UnsupportedNoOfMessages {
-                expected: messages.len(),
-                given: blinding_key.Y.len(),
-            });
-        }
+        Self::check_blinding_key_and_messages_compat(messages, blinding_key)?;
 
         let u = FieldElement::random();
 
@@ -101,7 +90,7 @@ impl BlindSignature {
         // sigma_2 = {X + Y_i^{m_i} + commitment}^u
         let mut points = SignatureGroupVec::with_capacity(messages.len());
         let mut scalars = FieldElementVector::with_capacity(messages.len());
-        let offset = blinding_key.Y.len() - messages.len();
+        let offset = blinding_key.msg_count() - messages.len();
         for i in 0..messages.len() {
             scalars.push(messages[i].clone());
             points.push(blinding_key.Y[offset + i].clone());
@@ -126,10 +115,10 @@ impl BlindSignature {
         messages: &[FieldElement],
         blinding_key: &BlindingKey,
     ) -> Result<(), PSError> {
-        if messages.len() != blinding_key.Y.len() {
+        if messages.len() >= blinding_key.msg_count() {
             return Err(PSError::UnsupportedNoOfMessages {
                 expected: messages.len(),
-                given: blinding_key.Y.len(),
+                given: blinding_key.msg_count(),
             });
         }
         Ok(())
@@ -140,10 +129,19 @@ impl BlindSignature {
 mod tests {
     use super::*;
     use crate::keys::keygen;
-    // For benchmarking
     use amcl_wrapper::field_elem::FieldElementVector;
     use amcl_wrapper::group_elem::GroupElement;
+    // For benchmarking
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn test_blinding_key() {
+        let count_msgs = 5;
+        let params = Params::new("test".as_bytes());
+        let (sk, vk) = keygen(count_msgs, &params);
+        let blinding_key = BlindingKey::new(&sk, &params);
+        assert_eq!(blinding_key.msg_count(), count_msgs);
+    }
 
     #[test]
     fn test_signature_single_blinded_message() {
@@ -153,7 +151,7 @@ mod tests {
             let count_msgs = 1;
             let (sk, vk) = keygen(count_msgs, &params);
 
-            let blinding_key = generate_blinding_key(&sk, &params);
+            let blinding_key = BlindingKey::new(&sk, &params);
             let msg = FieldElement::random();
             let blinding = FieldElement::random();
 
@@ -173,7 +171,7 @@ mod tests {
             let count_msgs = (i % 5) + 1;
             let (sk, vk) = keygen(count_msgs, &params);
 
-            let blinding_key = generate_blinding_key(&sk, &params);
+            let blinding_key = BlindingKey::new(&sk, &params);
             let msgs = FieldElementVector::random(count_msgs);
             let blinding = FieldElement::random();
 
@@ -197,7 +195,7 @@ mod tests {
             let count_blinded_msgs = (i % count_msgs) + 1;
             let (sk, vk) = keygen(count_msgs, &params);
 
-            let blinding_key = generate_blinding_key(&sk, &params);
+            let blinding_key = BlindingKey::new(&sk, &params);
             let msgs = FieldElementVector::random(count_msgs);
             let blinding = FieldElement::random();
 
@@ -229,7 +227,7 @@ mod tests {
         let (sk, vk) = keygen(count_msgs, &params);
         let sk_X = &params.g * &sk.x;
 
-        let blinding_key = generate_blinding_key(&sk, &params);
+        let blinding_key = BlindingKey::new(&sk, &params);
         let msgs = FieldElementVector::random(count_msgs);
         let blinding = FieldElement::random();
 
@@ -299,7 +297,7 @@ mod tests {
 
         let (sk, vk) = keygen(count_msgs, &params);
 
-        let blinding_key = generate_blinding_key(&sk, &params);
+        let blinding_key = BlindingKey::new(&sk, &params);
 
         let mut total_signing = Duration::new(0, 0);
         let mut total_verifying = Duration::new(0, 0);
@@ -350,7 +348,7 @@ mod tests {
         let (sk, vk) = keygen(count_msgs, &params);
         let sk_X = &params.g * &sk.x;
 
-        let blinding_key = generate_blinding_key(&sk, &params);
+        let blinding_key = BlindingKey::new(&sk, &params);
 
         let mut total_signing_modified = Duration::new(0, 0);
         let mut total_signing_paper = Duration::new(0, 0);

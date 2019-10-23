@@ -23,7 +23,7 @@ impl_PoK_VC!(
 );
 
 impl Signature {
-    /// Signed creates a signature.
+    /// Signer creates a signature.
     pub fn new(messages: &[FieldElement], sigkey: &Sigkey, params: &Params) -> Result<Self, PSError> {
         assert_eq!(sigkey.y.len(), messages.len());
         // A random h should be generated which is same as generating a random u and then computing h = g^u

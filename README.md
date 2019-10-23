@@ -8,8 +8,8 @@ describe any technique to do so. But less efficient techniques from Coconut or o
 is implemented as described in the paper.  
       
       
-The signature scheme from section 6.1 of the paper allows for signing committed messages as well. 
-Demonstrated by test `test_sig_committed_messages`.  
+The signature scheme from section 6.1 of the paper allows for signing blinded messages as well. 
+Demonstrated by test `test_signature_blinded_messages`.  
 Implementing proof of knowledge of a signature from section 6.2 of paper. Demonstrated by test `test_PoK_sig`.  
 In addition to proof of knowledge, the user can also reveal some of the messages under the signature without revealing all messages or signature.
 Demonstrated in test `test_PoK_sig_reveal_messages`.  
@@ -24,9 +24,9 @@ tilde elements (X_tilde and Y_tilde) and non-tilde elements (X, Y). Now the veri
 The public key is unchanged, i.e. (g, Y_1, Y_2,..., Y_tilde_1, Y_tilde_2, ...)
 - Sign: Lets say the signer wants to sign a multi-message of 10 messages where only 1 message is blinded. 
 If we go by the paper where signer does not have y_1, y_2, .. y_10, signer will pick a random u and compute signature as 
-(g^u, (XC)^u.Y_2^u.Y_3^u...Y_10^u), Y_1 is omitted as the first message was blinded. Of course the term 
-(XC)^u.Y_2^u.Y_3^u...Y_10^u can be computed using efficient multi-exponentiation techniques but it would be more efficient 
-if the signer could instead compute (g^u, C^u.g^{(x+y_2+y_3+...y_10).u}). The resulting signature will have the same form 
+(g^u, (XC)^u.Y_2^{m_2*u}.Y_3^{m_3*u}...Y_10^{m_10*u}), Y_1 is omitted as the first message was blinded. Of course the term 
+(XC)^u.Y_2^{m_2*u}.Y_3^{m_3*u}...Y_10^{m_10*u} can be computed using efficient multi-exponentiation techniques but it would be more efficient 
+if the signer could instead compute (g^u, C^u.g^{(x+y_2.m_2+y_3.m_3+...y_10.m_10).u}). The resulting signature will have the same form 
 and can be unblinded in the same way as described in the paper.  
 This will make signer's secret key storage a bit more but will make the signing becomes more efficient, especially in cases 
 where the signature has only a few blinded messages but most messages are known to the signer which is usually the case with 

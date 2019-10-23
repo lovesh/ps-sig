@@ -5,7 +5,6 @@ use ps_sig::blind_signature::*;
 use ps_sig::pok_sig::*;
 use ps_sig::{OtherGroupVec, SignatureGroup};
 use std::collections::{HashMap, HashSet};
-use ps_sig::blind_signature::generate_blinding_key;
 
 #[test]
 fn test_scenario_1() {
@@ -17,7 +16,7 @@ fn test_scenario_1() {
     let params = Params::new("test".as_bytes());
     let (sk, vk) = keygen(count_msgs, &params);
 
-    let blinding_key = generate_blinding_key(&sk, &params);
+    let blinding_key = BlindingKey::new(&sk, &params);
     let msgs = FieldElementVector::random(count_msgs);
     let blinding = FieldElement::random();
 

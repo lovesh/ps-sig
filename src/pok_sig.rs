@@ -205,7 +205,6 @@ mod tests {
     // For benchmarking
     use crate::keys::keygen;
     use std::time::{Duration, Instant};
-    use crate::blind_signature::generate_blinding_key;
 
     impl_PoK_VC!(
         ProverCommittingSignatureGroup,
