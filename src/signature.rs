@@ -1,7 +1,7 @@
 // Scheme defined in section 4.2. The idea for blind signatures can be taken from Coconut
 
 use crate::errors::PSError;
-use crate::{ate_2_pairing, OtherGroup, OtherGroupVec, SignatureGroup, SignatureGroupVec};
+use crate::{ate_2_pairing, VerkeyGroup, VerkeyGroupVec, SignatureGroup, SignatureGroupVec};
 use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
 use amcl_wrapper::group_elem::{GroupElement, GroupElementVector};
 use crate::keys::{Params, Sigkey, Verkey};
@@ -69,7 +69,7 @@ impl Signature {
         if self.sigma_1.is_identity() || self.sigma_2.is_identity() {
             return Ok(false);
         }
-        let mut Y_m_bases = OtherGroupVec::with_capacity(messages.len());
+        let mut Y_m_bases = VerkeyGroupVec::with_capacity(messages.len());
         let mut Y_m_exps = FieldElementVector::with_capacity(messages.len());
         for i in 0..messages.len() {
             Y_m_bases.push(vk.Y_tilde[i].clone());

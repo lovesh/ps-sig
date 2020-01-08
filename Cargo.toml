@@ -1,6 +1,6 @@
 [package]
 name = "ps_sig"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["lovesh <lovesh.bond@gmail.com>"]
 edition = "2018"
 description = "Pointcheval Sanders signatures"
@@ -8,7 +8,7 @@ license = "Apache-2.0"
 repository = "https://github.com/lovesh/ps-sig"
 
 [dependencies]
-rand = "0.6"
+rand = "0.7"
 failure = "0.1.5"
 serde = "1.0"
 serde_derive = "1.0"

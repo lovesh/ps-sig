@@ -4,7 +4,7 @@ use crate::errors::PSError;
 use crate::keys::{Params, Verkey};
 use crate::signature::Signature;
 use crate::blind_signature::{BlindingKey, BlindSignature};
-use crate::{ate_2_pairing, OtherGroup, OtherGroupVec, SignatureGroup, SignatureGroupVec};
+use crate::{ate_2_pairing, VerkeyGroup, VerkeyGroupVec, SignatureGroup, SignatureGroupVec};
 use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
 use amcl_wrapper::group_elem::{GroupElement, GroupElementVector};
 use amcl_wrapper::group_elem_g1::{G1Vector, G1};
@@ -17,8 +17,8 @@ impl_PoK_VC!(
     ProverCommittingOtherGroup,
     ProverCommittedOtherGroup,
     ProofOtherGroup,
-    OtherGroup,
-    OtherGroupVec
+    VerkeyGroup,
+    VerkeyGroupVec
 );
 
 /*
@@ -37,14 +37,14 @@ then add the revealed values (raised to the respective generators) to get a fina
 pub struct PoKOfSignature {
     pub secrets: FieldElementVector,
     pub sig: Signature,
-    pub J: OtherGroup,
+    pub J: VerkeyGroup,
     pub pok_vc: ProverCommittedOtherGroup,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PoKOfSignatureProof {
     pub sig: Signature,
-    pub J: OtherGroup,
+    pub J: VerkeyGroup,
     pub proof_vc: ProofOtherGroup,
 }
 
@@ -93,7 +93,7 @@ impl PoKOfSignature {
 
         // +1 for `t`
         let hidden_msg_count = vk.Y_tilde.len() - revealed_msg_indices.len() + 1;
-        let mut bases = OtherGroupVec::with_capacity(hidden_msg_count);
+        let mut bases = VerkeyGroupVec::with_capacity(hidden_msg_count);
         let mut exponents = FieldElementVector::with_capacity(hidden_msg_count);
         bases.push(params.g_tilde.clone());
         exponents.push(t.clone());
@@ -148,6 +148,49 @@ impl PoKOfSignature {
 }
 
 impl PoKOfSignatureProof {
+    /// Return bytes that need to be hashed for generating challenge. Since the message only requires
+    /// commitment to "non-revealed" messages of signature, generators of only those messages are
+    /// to be considered for challenge creation.
+    /// Takes bytes of the randomized signature, the "commitment" to non-revealed messages (J) and the
+    /// generators and the commitment to randomness used in the proof of knowledge of "non-revealed" messages.
+    pub fn get_bytes_for_challenge(
+        &self,
+        revealed_msg_indices: HashSet<usize>,
+        vk: &Verkey,
+        params: &Params,
+    ) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.append(&mut self.sig.to_bytes());
+        bytes.append(&mut self.J.to_bytes());
+        bytes.append(&mut params.g_tilde.to_bytes());
+        for i in 0..vk.Y_tilde.len() {
+            if revealed_msg_indices.contains(&i) {
+                continue;
+            }
+            let mut b = vk.Y_tilde[i].to_bytes();
+            bytes.append(&mut b);
+        }
+        bytes.append(&mut self.proof_vc.commitment.to_bytes());
+        bytes
+    }
+
+    /// Get the response from post-challenge phase of the Sigma protocol for the given message index `msg_idx`.
+    /// Used when comparing message equality
+    pub fn get_resp_for_message(&self, msg_idx: usize) -> Result<FieldElement, PSError> {
+        // 1 element in self.proof_vc.responses is reserved for the random `t`
+        if msg_idx >= (self.proof_vc.responses.len() - 1) {
+            return Err(PSError::GeneralError {
+                msg: format!(
+                    "Message index was given {} but should be less than {}",
+                    msg_idx,
+                    self.proof_vc.responses.len() - 1
+                ),
+            });
+        }
+        // 1 added to the index, since 0th index is reserved for randomization (`t`)
+        Ok(self.proof_vc.responses[1 + msg_idx].clone())
+    }
+
     pub fn verify(
         &self,
         vk: &Verkey,
@@ -161,7 +204,7 @@ impl PoKOfSignatureProof {
 
         // +1 for `t`
         let hidden_msg_count = vk.Y_tilde.len() - revealed_msgs.len() + 1;
-        let mut bases = OtherGroupVec::with_capacity(hidden_msg_count);
+        let mut bases = VerkeyGroupVec::with_capacity(hidden_msg_count);
         bases.push(params.g_tilde.clone());
         for i in 0..vk.Y_tilde.len() {
             if revealed_msgs.contains_key(&i) {
@@ -178,7 +221,7 @@ impl PoKOfSignatureProof {
             &self.J
         } else {
             j = self.J.clone();
-            let mut b = OtherGroupVec::with_capacity(revealed_msgs.len());
+            let mut b = VerkeyGroupVec::with_capacity(revealed_msgs.len());
             let mut e = FieldElementVector::with_capacity(revealed_msgs.len());
             for (i, m) in revealed_msgs {
                 b.push(vk.Y_tilde[i].clone());
@@ -237,8 +280,8 @@ mod tests {
             ProverCommittingOtherGroup,
             ProverCommittedOtherGroup,
             ProofOtherGroup,
-            OtherGroup,
-            OtherGroupVec
+            VerkeyGroup,
+            VerkeyGroupVec
         );
     }
 
@@ -254,11 +297,15 @@ mod tests {
 
         let pok = PoKOfSignature::init(&sig, &vk, &params, msgs.as_slice(), None, HashSet::new()).unwrap();
 
-        let chal = pok.pok_vc.gen_challenge(pok.J.to_bytes());
+        let chal_prover = FieldElement::from_msg_hash(&pok.to_bytes());
 
-        let proof = pok.gen_proof(&chal).unwrap();
+        let proof = pok.gen_proof(&chal_prover).unwrap();
 
-        assert!(proof.verify(&vk, &params, HashMap::new(), &chal).unwrap());
+        // The verifier generates the challenge on its own.
+        let chal_bytes = proof.get_bytes_for_challenge(HashSet::new(), &vk, &params);
+        let chal_verifier = FieldElement::from_msg_hash(&chal_bytes);
+
+        assert!(proof.verify(&vk, &params, HashMap::new(), &chal_verifier).unwrap());
 
         // PoK with supplied blindings
         let blindings = FieldElementVector::random(count_msgs);
@@ -271,10 +318,15 @@ mod tests {
             HashSet::new(),
         )
         .unwrap();
-        let chal_1 = FieldElement::from_msg_hash(&pok_1.to_bytes());
-        let proof_1 = pok_1.gen_proof(&chal_1).unwrap();
+        let chal_prover = FieldElement::from_msg_hash(&pok_1.to_bytes());
+        let proof_1 = pok_1.gen_proof(&chal_prover).unwrap();
 
-        assert!(proof_1.verify(&vk, &params, HashMap::new(), &chal_1).unwrap());
+        // The verifier generates the challenge on its own.
+        let chal_bytes = proof_1.get_bytes_for_challenge(HashSet::new(), &vk, &params);
+        let chal_verifier = FieldElement::from_msg_hash(&chal_bytes);
+        assert!(proof_1
+            .verify(&vk, &params, HashMap::new(), &chal_verifier)
+            .unwrap());
     }
 
     #[test]
@@ -303,20 +355,25 @@ mod tests {
         )
         .unwrap();
 
-        let chal = pok.pok_vc.gen_challenge(pok.J.to_bytes());
+        let chal_prover = FieldElement::from_msg_hash(&pok.to_bytes());
 
-        let proof = pok.gen_proof(&chal).unwrap();
+        let proof = pok.gen_proof(&chal_prover).unwrap();
 
         let mut revealed_msgs = HashMap::new();
         for i in &revealed_msg_indices {
             revealed_msgs.insert(i.clone(), msgs[*i].clone());
         }
-        assert!(proof.verify(&vk, &params, revealed_msgs.clone(), &chal).unwrap());
+        // The verifier generates the challenge on its own.
+        let chal_bytes = proof.get_bytes_for_challenge(revealed_msg_indices.clone(), &vk, &params);
+        let chal_verifier = FieldElement::from_msg_hash(&chal_bytes);
+        assert!(proof
+            .verify(&vk, &params, revealed_msgs.clone(), &chal_verifier)
+            .unwrap());
 
         // Reveal wrong message
         let mut revealed_msgs_1 = revealed_msgs.clone();
         revealed_msgs_1.insert(2, FieldElement::random());
-        assert!(!proof.verify(&vk, &params, revealed_msgs_1.clone(), &chal).unwrap());
+        assert!(!proof.verify(&vk, &params, revealed_msgs_1.clone(), &chal_verifier).unwrap());
     }
 
     #[test]
@@ -343,13 +400,23 @@ mod tests {
         chal_bytes.append(&mut pok_1.to_bytes());
         chal_bytes.append(&mut pok_2.to_bytes());
 
-        let chal = FieldElement::from_msg_hash(&chal_bytes);
+        let chal_prover = FieldElement::from_msg_hash(&chal_bytes);
 
-        let proof_1 = pok_1.gen_proof(&chal).unwrap();
-        let proof_2 = pok_2.gen_proof(&chal).unwrap();
+        let proof_1 = pok_1.gen_proof(&chal_prover).unwrap();
+        let proof_2 = pok_2.gen_proof(&chal_prover).unwrap();
 
-        assert!(proof_1.verify(&vk, &params, HashMap::new(), &chal).unwrap());
-        assert!(proof_2.verify(&vk, &params, HashMap::new(), &chal).unwrap());
+        // The verifier generates the challenge on its own.
+        let mut chal_bytes = vec![];
+        chal_bytes.append(&mut proof_1.get_bytes_for_challenge(HashSet::new(), &vk, &params));
+        chal_bytes.append(&mut proof_2.get_bytes_for_challenge(HashSet::new(), &vk, &params));
+        let chal_verifier = FieldElement::from_msg_hash(&chal_bytes);
+
+        assert!(proof_1
+            .verify(&vk, &params, HashMap::new(), &chal_verifier)
+            .unwrap());
+        assert!(proof_2
+            .verify(&vk, &params, HashMap::new(), &chal_verifier)
+            .unwrap());
     }
 
     #[test]
@@ -414,11 +481,9 @@ mod tests {
         let proof_2 = pok_2.gen_proof(&chal).unwrap();
 
         // Response for the same message should be same (this check is made by the verifier)
-        // 1 added to the index, since 0th index is reserved for randomization (`t`)
-        // XXX: Does adding a `get_resp_for_message` to `proof` make sense to abstract this detail of +1.
         assert_eq!(
-            proof_1.proof_vc.responses[1 + 1],
-            proof_2.proof_vc.responses[1 + 4]
+            proof_1.get_resp_for_message(1).unwrap(),
+            proof_2.get_resp_for_message(4).unwrap()
         );
 
         assert!(proof_1.verify(&vk, &params, HashMap::new(), &chal).unwrap());
@@ -445,13 +510,15 @@ mod tests {
             let pok =
                 PoKOfSignature::init(&sig, &vk, &params, msgs.as_slice(), None, HashSet::new()).unwrap();
 
-            let chal = pok.pok_vc.gen_challenge(pok.J.to_bytes());
+            let chal_prover = FieldElement::from_msg_hash(&pok.to_bytes());
 
-            let proof = pok.gen_proof(&chal).unwrap();
+            let proof = pok.gen_proof(&chal_prover).unwrap();
             total_generating += start.elapsed();
 
             let start = Instant::now();
-            assert!(proof.verify(&vk, &params, HashMap::new(), &chal).unwrap());
+            // The verifier generates the challenge on its own.
+            let chal_bytes = proof.get_bytes_for_challenge(HashSet::new(), &vk, &params);
+            let chal_verifier = FieldElement::from_msg_hash(&chal_bytes);
             total_verifying += start.elapsed();
         }
 

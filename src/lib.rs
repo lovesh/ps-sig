@@ -13,15 +13,15 @@ pub type SignatureGroup = amcl_wrapper::group_elem_g2::G2;
 #[cfg(feature = "SignatureG2")]
 pub type SignatureGroupVec = amcl_wrapper::group_elem_g2::G2Vector;
 #[cfg(feature = "SignatureG2")]
-pub type OtherGroup = amcl_wrapper::group_elem_g1::G1;
+pub type VerkeyGroup = amcl_wrapper::group_elem_g1::G1;
 #[cfg(feature = "SignatureG2")]
-pub type OtherGroupVec = amcl_wrapper::group_elem_g1::G1Vector;
+pub type VerkeyGroupVec = amcl_wrapper::group_elem_g1::G1Vector;
 #[cfg(feature = "SignatureG2")]
 pub fn ate_2_pairing(
     g1: &SignatureGroup,
-    g2: &OtherGroup,
+    g2: &VerkeyGroup,
     h1: &SignatureGroup,
-    h2: &OtherGroup,
+    h2: &VerkeyGroup,
 ) -> GT {
     GT::ate_2_pairing(g2, g1, h2, h1)
 }
@@ -31,15 +31,15 @@ pub type SignatureGroup = amcl_wrapper::group_elem_g1::G1;
 #[cfg(feature = "SignatureG1")]
 pub type SignatureGroupVec = amcl_wrapper::group_elem_g1::G1Vector;
 #[cfg(feature = "SignatureG1")]
-pub type OtherGroup = amcl_wrapper::group_elem_g2::G2;
+pub type VerkeyGroup = amcl_wrapper::group_elem_g2::G2;
 #[cfg(feature = "SignatureG1")]
-pub type OtherGroupVec = amcl_wrapper::group_elem_g2::G2Vector;
+pub type VerkeyGroupVec = amcl_wrapper::group_elem_g2::G2Vector;
 #[cfg(feature = "SignatureG1")]
 pub fn ate_2_pairing(
     g1: &SignatureGroup,
-    g2: &OtherGroup,
+    g2: &VerkeyGroup,
     h1: &SignatureGroup,
-    h2: &OtherGroup,
+    h2: &VerkeyGroup,
 ) -> GT {
     GT::ate_2_pairing(g1, g2, h1, h2)
 }

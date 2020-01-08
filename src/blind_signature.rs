@@ -5,7 +5,7 @@ use crate::keys::{Params, Sigkey, Verkey};
 use crate::signature::Signature;
 use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
 use amcl_wrapper::group_elem::{GroupElement, GroupElementVector};
-use crate::{ate_2_pairing, OtherGroup, OtherGroupVec, SignatureGroup, SignatureGroupVec};
+use crate::{ate_2_pairing, VerkeyGroup, VerkeyGroupVec, SignatureGroup, SignatureGroupVec};
 
 // The public key described in the paper is split into `BlindingKey` and `Verkey`. Only `Verkey` is
 // needed by the verifier. `BlindingKey` is used by the user to request a blind signature.

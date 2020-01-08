@@ -3,7 +3,7 @@ use amcl_wrapper::group_elem::{GroupElement, GroupElementVector};
 use ps_sig::keys::{keygen, Params};
 use ps_sig::blind_signature::*;
 use ps_sig::pok_sig::*;
-use ps_sig::{OtherGroupVec, SignatureGroup};
+use ps_sig::{VerkeyGroupVec, SignatureGroup};
 use std::collections::{HashMap, HashSet};
 
 #[test]

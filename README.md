@@ -28,7 +28,7 @@ If we go by the paper where signer does not have y_1, y_2, .. y_10, signer will 
 (XC)^u.Y_2^{m_2*u}.Y_3^{m_3*u}...Y_10^{m_10*u} can be computed using efficient multi-exponentiation techniques but it would be more efficient 
 if the signer could instead compute (g^u, C^u.g^{(x+y_2.m_2+y_3.m_3+...y_10.m_10).u}). The resulting signature will have the same form 
 and can be unblinded in the same way as described in the paper.  
-This will make signer's secret key storage a bit more but will make the signing becomes more efficient, especially in cases 
+This will make signer's secret key storage a bit more but will make the signing more efficient, especially in cases 
 where the signature has only a few blinded messages but most messages are known to the signer which is usually the case with 
 anonymous credentials where the user's secret key is blinded (its not known to signer) in the signature. This variation makes 
 signing considerably faster unless the no of unblinded messages is very small compared to no of blinded messages. 
