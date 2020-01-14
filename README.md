@@ -1,4 +1,6 @@
-[Short Randomizable signatures](https://eprint.iacr.org/2015/525) by David Pointcheval and Olivier Sanders.
+# [Short Randomizable signatures](https://eprint.iacr.org/2015/525) by David Pointcheval and Olivier Sanders.
+
+## Signature and proof of knowledge of signature
 Implements 2 variations as described in the paper in sections 4.2 and 6.1 respectively. Scheme in 6.1 was 
 presented to make blind signatures efficient however there are ways to do blind signatures with 4.2 but they 
 are relatively inefficient. One way to do so is described in [Coconut](https://arxiv.org/pdf/1802.07344.pdf).
@@ -33,7 +35,14 @@ where the signature has only a few blinded messages but most messages are known 
 anonymous credentials where the user's secret key is blinded (its not known to signer) in the signature. This variation makes 
 signing considerably faster unless the no of unblinded messages is very small compared to no of blinded messages. 
 Run test `timing_comparison_for_both_blind_signature_schemes` to see the difference 
-  
+
+
+## Multi-signature
+Multiple PS signatures can be aggregated using the same principle BLS signatures since the secrets are in the exponents like BLS signatures.
+Signatures are aggregated by multiplying them together like BLS signatures and verification keys can be aggregated by multiplying the 
+corresponding parts together. The signers should however use the same `Params` and while signing create deterministic signatures using 
+`Signature::new_deterministic` which hashes the messages to create a group generator. Look at the test `test_multi_signature_all_known_messages`.
+
 The groups for public key (*_tilde) and signatures can be swapped by compiling with feature `SignatureG2` or `SignatureG1`. 
 These features are mutually exclusive. The default feature is `SignatureG2` meaning signatures are in group G2 which 
 makes signing slower but proof of knowledge of signature faster.  

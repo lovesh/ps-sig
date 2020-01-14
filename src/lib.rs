@@ -59,3 +59,4 @@ pub mod keys;
 pub mod pok_sig;
 pub mod signature;
 pub mod blind_signature;
+pub mod multi_signature;

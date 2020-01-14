@@ -25,7 +25,7 @@ impl_PoK_VC!(
 impl Signature {
     /// Signer creates a signature.
     pub fn new(messages: &[FieldElement], sigkey: &Sigkey, params: &Params) -> Result<Self, PSError> {
-        assert_eq!(sigkey.y.len(), messages.len());
+        Self::check_sigkey_and_messages_compat(messages, sigkey)?;
         // A random h should be generated which is same as generating a random u and then computing h = g^u
         let u = FieldElement::random();
         let (sigma_1, sigma_2) = Self::sign_with_sigma_1_generated_from_given_exp(
@@ -38,7 +38,15 @@ impl Signature {
         Ok(Self { sigma_1, sigma_2 })
     }
 
-    // Generate signature when first element of signature tuple is generated using given exponent
+    pub fn new_deterministic(messages: &[FieldElement], sigkey: &Sigkey) -> Result<Self, PSError> {
+        Self::check_sigkey_and_messages_compat(messages, sigkey)?;
+        let sigma_1 = Self::generate_sigma_1_from_messages(messages);
+        let sigma_2 = Self::sign_with_given_sigma_1(messages, sigkey, 0, &sigma_1)?;
+        Ok(Self {sigma_1, sigma_2})
+    }
+
+    /// Generate signature when first element of signature tuple is generated using given exponent
+    /// Does only 1 scalar multiplication
     pub fn sign_with_sigma_1_generated_from_given_exp(
         messages: &[FieldElement],
         sigkey: &Sigkey,
@@ -46,16 +54,30 @@ impl Signature {
         offset: usize,
         g: &SignatureGroup,
     ) -> Result<(SignatureGroup, SignatureGroup), PSError> {
-        assert_eq!(offset + messages.len(), sigkey.y.len());
         // h = g^u
         let h = g * u;
+        let h_exp = Self::sign_with_given_sigma_1(messages, sigkey, offset, &h)?;
+        Ok((h, h_exp))
+    }
+
+    /// Generate signature when first element of signature tuple is given
+    pub fn sign_with_given_sigma_1(messages: &[FieldElement],
+                                   sigkey: &Sigkey,
+                                   offset: usize,
+                                   h: &SignatureGroup) -> Result<SignatureGroup, PSError> {
+        if sigkey.y.len() != offset + messages.len() {
+            return Err(PSError::UnsupportedNoOfMessages {
+                expected: offset + messages.len(),
+                given: sigkey.y.len()
+            });
+        }
         // h^(x + y_j*m_j + y_{j+1}*m_{j+1} + y_{j+2}*m_{j+2} + ...) = g^{u * (x + y_j*m_j + y_{j+1}*m_{j+1} + y_{j+2}*m_{j+2} + ...)}
         let mut exp = sigkey.x.clone();
         for i in 0..messages.len() {
             exp += &sigkey.y[offset + i] * &messages[i];
         }
-        let h_exp = &h * &exp;
-        Ok((h, h_exp))
+        let h_exp = h * &exp;
+        Ok(h_exp)
     }
 
     /// Verify a signature. Can verify unblinded sig received from a signer and the aggregate sig as well.
@@ -65,7 +87,12 @@ impl Signature {
         vk: &Verkey,
         params: &Params,
     ) -> Result<bool, PSError> {
-        assert_eq!(messages.len(), vk.Y_tilde.len());
+        if vk.Y_tilde.len() != messages.len() {
+            return Err(PSError::UnsupportedNoOfMessages {
+                expected: vk.Y_tilde.len(),
+                given: messages.len()
+            });
+        }
         if self.sigma_1.is_identity() || self.sigma_2.is_identity() {
             return Ok(false);
         }
@@ -102,6 +129,29 @@ impl Signature {
         }
         Ok(())
     }
+
+    pub fn check_sigkey_and_messages_compat(
+        messages: &[FieldElement],
+        sigkey: &Sigkey,
+    ) -> Result<(), PSError> {
+        if sigkey.y.len() != messages.len() {
+            return Err(PSError::UnsupportedNoOfMessages {
+                expected: sigkey.y.len(),
+                given: messages.len()
+            });
+        }
+        Ok(())
+    }
+
+    /// Generate first element of the signature by hashing the messages. Since all messages are of
+    /// same size, the is no need of a delimiter between the byte representation of the messages.
+    fn generate_sigma_1_from_messages(messages: &[FieldElement]) -> SignatureGroup {
+        let mut msg_bytes = vec![];
+        for i in messages {
+            msg_bytes.append(&mut i.to_bytes());
+        }
+        SignatureGroup::from_msg_hash(&msg_bytes)
+    }
 }
 
 #[cfg(test)]
@@ -119,6 +169,18 @@ mod tests {
             let (sk, vk) = keygen(count_msgs, &params);
             let msgs = FieldElementVector::random(count_msgs);
             let sig = Signature::new(msgs.as_slice(), &sk, &params).unwrap();
+            assert!(sig.verify(msgs.as_slice(), &vk, &params).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_deterministic_signature_all_known_messages() {
+        let params = Params::new("test".as_bytes());
+        for i in 0..10 {
+            let count_msgs = (i % 5) + 1;
+            let (sk, vk) = keygen(count_msgs, &params);
+            let msgs = FieldElementVector::random(count_msgs);
+            let sig = Signature::new_deterministic(msgs.as_slice(), &sk).unwrap();
             assert!(sig.verify(msgs.as_slice(), &vk, &params).unwrap());
         }
     }
