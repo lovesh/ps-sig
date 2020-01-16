@@ -1,4 +1,5 @@
-// Scheme defined in section 4.2. The idea for blind signatures can be taken from Coconut
+// Scheme defined in 2016 paper, CT-RSA 2016 (eprint 2015/525), section 4.2.
+// The idea for blind signatures can be taken from Coconut
 
 use crate::errors::PSError;
 use crate::{ate_2_pairing, VerkeyGroup, VerkeyGroupVec, SignatureGroup, SignatureGroupVec};
@@ -14,16 +15,9 @@ pub struct Signature {
     pub sigma_2: SignatureGroup,
 }
 
-impl_PoK_VC!(
-    ProverCommittingSignatureGroup,
-    ProverCommittedSignatureGroup,
-    ProofSignatureGroup,
-    SignatureGroup,
-    SignatureGroupVec
-);
-
 impl Signature {
-    /// Signer creates a signature.
+    /// Create a new signature. The signature generation involves generating a random value for `sigma_1` so different
+    /// calls to this method with same messages, signing key and params will give different value
     pub fn new(messages: &[FieldElement], sigkey: &Sigkey, params: &Params) -> Result<Self, PSError> {
         Self::check_sigkey_and_messages_compat(messages, sigkey)?;
         // A random h should be generated which is same as generating a random u and then computing h = g^u
@@ -38,6 +32,9 @@ impl Signature {
         Ok(Self { sigma_1, sigma_2 })
     }
 
+    /// Create a new signature. The signature generation doesn't involve generating a random value but
+    /// the messages are hashed to get a pseudorandom value for `sigma_1`. Hence different calls to this method
+    /// with same messages and signing key will give same value
     pub fn new_deterministic(messages: &[FieldElement], sigkey: &Sigkey) -> Result<Self, PSError> {
         Self::check_sigkey_and_messages_compat(messages, sigkey)?;
         let sigma_1 = Self::generate_sigma_1_from_messages(messages);
@@ -83,7 +80,7 @@ impl Signature {
     /// Verify a signature. Can verify unblinded sig received from a signer and the aggregate sig as well.
     pub fn verify(
         &self,
-        messages: &[FieldElement],
+        messages: Vec<FieldElement>,
         vk: &Verkey,
         params: &Params,
     ) -> Result<bool, PSError> {
@@ -93,23 +90,14 @@ impl Signature {
                 given: messages.len()
             });
         }
-        if self.sigma_1.is_identity() || self.sigma_2.is_identity() {
+        if self.is_identity() {
             return Ok(false);
         }
-        let mut Y_m_bases = VerkeyGroupVec::with_capacity(messages.len());
-        let mut Y_m_exps = FieldElementVector::with_capacity(messages.len());
-        for i in 0..messages.len() {
-            Y_m_bases.push(vk.Y_tilde[i].clone());
-            Y_m_exps.push(messages[i].clone());
-        }
-        // Y_m = X_tilde * Y_tilde[1]^m_1 * Y_tilde[2]^m_2 * ...Y_tilde[i]^m_i
-        let Y_m = &vk.X_tilde + &(Y_m_bases.multi_scalar_mul_var_time(&Y_m_exps).unwrap());
-        // e(sigma_1, Y_m) == e(sigma_2, g2) => e(sigma_1, Y_m) * e(-sigma_2, g2) == 1, if precomputation can be used, then
-        // inverse in sigma_2 can be avoided since inverse of g_tilde can be precomputed
-        let e = ate_2_pairing(&self.sigma_1, &Y_m, &(self.sigma_2.negation()), &params.g_tilde);
-        Ok(e.is_one())
+
+        Ok(self.pairing_check(messages, vk, params))
     }
 
+    /// Byte representation of the signature
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![];
         bytes.append(&mut self.sigma_1.to_bytes());
@@ -136,11 +124,32 @@ impl Signature {
     ) -> Result<(), PSError> {
         if sigkey.y.len() != messages.len() {
             return Err(PSError::UnsupportedNoOfMessages {
-                expected: sigkey.y.len(),
-                given: messages.len()
+                expected: messages.len(),
+                given: sigkey.y.len()
             });
         }
         Ok(())
+    }
+
+    /// Checks if a signature has identity elements. A valid signature should not have identity elements.
+    pub fn is_identity(&self) -> bool {
+        self.sigma_1.is_identity() || self.sigma_2.is_identity()
+    }
+
+    /// Do the multi-exp and pairing check during verification.
+    pub(crate) fn pairing_check(&self, messages: Vec<FieldElement>, vk: &Verkey, params: &Params) -> bool {
+        let mut Y_m_bases = VerkeyGroupVec::with_capacity(messages.len());
+        let mut Y_m_exps = FieldElementVector::with_capacity(messages.len());
+        for (i, msg) in messages.into_iter().enumerate() {
+            Y_m_bases.push(vk.Y_tilde[i].clone());
+            Y_m_exps.push(msg);
+        }
+        // Y_m = X_tilde * Y_tilde[1]^m_1 * Y_tilde[2]^m_2 * ...Y_tilde[i]^m_i
+        let Y_m = &vk.X_tilde + &(Y_m_bases.multi_scalar_mul_var_time(&Y_m_exps).unwrap());
+        // e(sigma_1, Y_m) == e(sigma_2, g2) => e(sigma_1, Y_m) * e(-sigma_2, g2) == 1, if precomputation can be used, then
+        // inverse in sigma_2 can be avoided since inverse of g_tilde can be precomputed
+        let e = ate_2_pairing(&self.sigma_1, &Y_m, &(self.sigma_2.negation()), &params.g_tilde);
+        e.is_one()
     }
 
     /// Generate first element of the signature by hashing the messages. Since all messages are of
@@ -167,9 +176,9 @@ mod tests {
         for i in 0..10 {
             let count_msgs = (i % 5) + 1;
             let (sk, vk) = keygen(count_msgs, &params);
-            let msgs = FieldElementVector::random(count_msgs);
+            let msgs = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
             let sig = Signature::new(msgs.as_slice(), &sk, &params).unwrap();
-            assert!(sig.verify(msgs.as_slice(), &vk, &params).unwrap());
+            assert!(sig.verify(msgs, &vk, &params).unwrap());
         }
     }
 
@@ -179,9 +188,9 @@ mod tests {
         for i in 0..10 {
             let count_msgs = (i % 5) + 1;
             let (sk, vk) = keygen(count_msgs, &params);
-            let msgs = FieldElementVector::random(count_msgs);
+            let msgs = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
             let sig = Signature::new_deterministic(msgs.as_slice(), &sk).unwrap();
-            assert!(sig.verify(msgs.as_slice(), &vk, &params).unwrap());
+            assert!(sig.verify(msgs, &vk, &params).unwrap());
         }
     }
 }

@@ -1,6 +1,8 @@
-# [Short Randomizable signatures](https://eprint.iacr.org/2015/525) by David Pointcheval and Olivier Sanders.
+# Randomizable signatures by David Pointcheval and Olivier Sanders.
 
-## Signature and proof of knowledge of signature
+## From the CT-RSA 2016 paper [Short Randomizable signatures](https://eprint.iacr.org/2015/525) which uses interactive assumptions
+
+### Signature and proof of knowledge of signature
 Implements 2 variations as described in the paper in sections 4.2 and 6.1 respectively. Scheme in 6.1 was 
 presented to make blind signatures efficient however there are ways to do blind signatures with 4.2 but they 
 are relatively inefficient. One way to do so is described in [Coconut](https://arxiv.org/pdf/1802.07344.pdf).
@@ -8,7 +10,8 @@ are relatively inefficient. One way to do so is described in [Coconut](https://a
 The signature scheme from section 4.2 does not allow blind signatures straightaway and the paper does not 
 describe any technique to do so. But less efficient techniques from Coconut or others can be used. The scheme 
 is implemented as described in the paper.  
-      
+
+The code for this lives in signature.rs, blind_signature.rs and pok_sig.rs. For generating keys use `keys::keygen`
       
 The signature scheme from section 6.1 of the paper allows for signing blinded messages as well. 
 Demonstrated by test `test_signature_blinded_messages`.  
@@ -36,12 +39,21 @@ anonymous credentials where the user's secret key is blinded (its not known to s
 signing considerably faster unless the no of unblinded messages is very small compared to no of blinded messages. 
 Run test `timing_comparison_for_both_blind_signature_schemes` to see the difference 
 
-
-## Multi-signature
+### Multi-signature
 Multiple PS signatures can be aggregated using the same principle BLS signatures since the secrets are in the exponents like BLS signatures.
 Signatures are aggregated by multiplying them together like BLS signatures and verification keys can be aggregated by multiplying the 
 corresponding parts together. The signers should however use the same `Params` and while signing create deterministic signatures using 
 `Signature::new_deterministic` which hashes the messages to create a group generator. Look at the test `test_multi_signature_all_known_messages`.
+
+
+## From the CT-RSA 2018 paper [Reassessing Security of Randomizable Signatures](https://eprint.iacr.org/2017/1197) which uses non-interactive assumptions
+
+The code for this lives in signature_2018.rs and pok_sig_2018.rs. For generating keys use `keys::keygen_2018`. For multi-signatures, use methods
+`MultiSignatureFast::from_sigs_2018` and `MultiSignatureFast::verify_2018`. Since majority of the protocol of signing (known) and proof of knowledge 
+of signature is same as the CT-RSA 2016 paper, there is a lot of code reuse. Currently there is no implementation of blind signature using this 
+new scheme but it can be done by using the ideas from Coconut where the committed attributes are individually committed using Elgamal encryption.
+
+### Implementation details
 
 The groups for public key (*_tilde) and signatures can be swapped by compiling with feature `SignatureG2` or `SignatureG1`. 
 These features are mutually exclusive. The default feature is `SignatureG2` meaning signatures are in group G2 which 

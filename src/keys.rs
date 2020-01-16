@@ -32,7 +32,7 @@ impl Params {
     }
 }
 
-/// Generate signing and verification keys
+/// Generate signing and verification keys for scheme from 2016 paper
 pub fn keygen(count_messages: usize, params: &Params) -> (Sigkey, Verkey) {
     // TODO: Take PRNG as argument
     let x = FieldElement::random();
@@ -45,6 +45,12 @@ pub fn keygen(count_messages: usize, params: &Params) -> (Sigkey, Verkey) {
         y.push(y_i);
     }
     (Sigkey { x, y }, Verkey { X_tilde, Y_tilde })
+}
+
+/// Generate signing and verification keys for scheme from 2018 paper. The signing and verification
+/// keys will have 1 extra element for m'
+pub fn keygen_2018(count_messages: usize, params: &Params) -> (Sigkey, Verkey) {
+    keygen(count_messages + 1, params)
 }
 
 #[cfg(test)]
@@ -60,5 +66,14 @@ mod tests {
         let (sk, vk) = keygen(count_msgs, &params);
         assert_eq!(sk.y.len(), count_msgs);
         assert_eq!(vk.Y_tilde.len(), count_msgs);
+    }
+
+    #[test]
+    fn test_keygen_2018() {
+        let count_msgs = 5;
+        let params = Params::new("test".as_bytes());
+        let (sk, vk) = keygen_2018(count_msgs, &params);
+        assert_eq!(sk.y.len(), count_msgs+1);
+        assert_eq!(vk.Y_tilde.len(), count_msgs+1);
     }
 }

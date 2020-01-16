@@ -1,4 +1,4 @@
-// Proof of knowledge of signature
+// Proof of knowledge of signature for signature from 2016 paper, CT-RSA 2016 (eprint 2015/525), section 6.2
 
 use crate::errors::PSError;
 use crate::keys::{Params, Verkey};
@@ -22,7 +22,7 @@ impl_PoK_VC!(
 );
 
 /*
-As section 6.2 describes, for proving knowledge of a signature, the signature sigma is first randomized and also
+As [Short Randomizable signatures](https://eprint.iacr.org/2015/525), section 6.2 describes, for proving knowledge of a signature, the signature sigma is first randomized and also
 transformed into a sequential aggregate signature with extra message t for public key g_tilde (and secret key 1).
 1. Say the signature sigma is transformed to sigma_prime = (sigma_prime_1, sigma_prime_2) like step 1 in 6.2
 1. The prover then sends sigma_prime and the value J = X_tilde * Y_tilde_1^m1 * Y_tilde_2^m2 * ..... * g_tilde^t and the proof J is formed correctly.
@@ -54,72 +54,19 @@ impl PoKOfSignature {
         sig: &Signature,
         vk: &Verkey,
         params: &Params,
-        messages: &[FieldElement],
+        messages: Vec<FieldElement>,
         blindings: Option<&[FieldElement]>,
         revealed_msg_indices: HashSet<usize>,
     ) -> Result<Self, PSError> {
-        for idx in &revealed_msg_indices {
-            if *idx >= messages.len() {
-                return Err(PSError::GeneralError {
-                    msg: format!("Index {} should be less than {}", idx, messages.len()),
-                });
-            }
-        }
-        Signature::check_verkey_and_messages_compat(messages, vk)?;
-        let mut blindings: Vec<Option<&FieldElement>> = match blindings {
-            Some(b) => {
-                if (messages.len() - revealed_msg_indices.len()) != b.len() {
-                    return Err(PSError::GeneralError {
-                        msg: format!(
-                            "No of blindings {} not equal to number of hidden messages {}",
-                            b.len(),
-                            (messages.len() - revealed_msg_indices.len())
-                        ),
-                    });
-                }
-                b.iter().map(Some).collect()
-            }
-            None => (0..(messages.len() - revealed_msg_indices.len()))
-                .map(|_| None)
-                .collect(),
-        };
+        Signature::check_verkey_and_messages_compat(messages.as_slice(), vk)?;
+        Self::validate_revealed_indices(messages.as_slice(), &revealed_msg_indices)?;
 
-        let r = FieldElement::random();
-        let t = FieldElement::random();
+        let blindings = Self::get_blindings(blindings, messages.as_slice(), &revealed_msg_indices)?;
 
-        // Transform signature to an aggregate signature on (messages, t)
-        let sigma_prime_1 = &sig.sigma_1 * &r;
-        let sigma_prime_2 = (&sig.sigma_2 + (&sig.sigma_1 * &t)) * &r;
+        let (t, sigma_prime) = Self::transform_sig(sig);
 
-        // +1 for `t`
-        let hidden_msg_count = vk.Y_tilde.len() - revealed_msg_indices.len() + 1;
-        let mut bases = VerkeyGroupVec::with_capacity(hidden_msg_count);
-        let mut exponents = FieldElementVector::with_capacity(hidden_msg_count);
-        bases.push(params.g_tilde.clone());
-        exponents.push(t.clone());
-        for i in 0..vk.Y_tilde.len() {
-            if revealed_msg_indices.contains(&i) {
-                continue;
-            }
-            bases.push(vk.Y_tilde[i].clone());
-            exponents.push(messages[i].clone());
-        }
-        // Prove knowledge of m_1, m_2, ... for all hidden m_i and t in J = Y_tilde_1^m_1 * Y_tilde_2^m_2 * ..... * g_tilde^t
-        let J = bases.multi_scalar_mul_const_time(&exponents).unwrap();
+        let (exponents, J, committed) = Self::commit_for_pok(messages, blindings, &revealed_msg_indices, t, vk, params);
 
-        // For proving knowledge of messages in J.
-        // Choose blinding for g_tilde randomly
-        blindings.insert(0, None);
-        let mut committing = ProverCommittingOtherGroup::new();
-        for b in bases.as_slice() {
-            committing.commit(b, blindings.remove(0));
-        }
-        let committed = committing.finish();
-
-        let sigma_prime = Signature {
-            sigma_1: sigma_prime_1,
-            sigma_2: sigma_prime_2,
-        };
         Ok(Self {
             secrets: exponents,
             sig: sigma_prime,
@@ -144,6 +91,87 @@ impl PoKOfSignature {
             J: self.J,
             proof_vc,
         })
+    }
+
+    pub(crate) fn validate_revealed_indices(messages: &[FieldElement],
+                                            revealed_msg_indices: &HashSet<usize>) -> Result<(), PSError> {
+        for idx in revealed_msg_indices {
+            if *idx >= messages.len() {
+                return Err(PSError::GeneralError {
+                    msg: format!("Index {} should be less than {}", idx, messages.len()),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn get_blindings<'a>(blindings: Option<&'a [FieldElement]>, messages: &[FieldElement],
+                                revealed_msg_indices: &HashSet<usize>) -> Result<Vec<Option<&'a FieldElement>>, PSError> {
+        let mut blindings = match blindings {
+            Some(b) => {
+                if (messages.len() - revealed_msg_indices.len()) != b.len() {
+                    return Err(PSError::GeneralError {
+                        msg: format!(
+                            "No of blindings {} not equal to number of hidden messages {}",
+                            b.len(),
+                            (messages.len() - revealed_msg_indices.len())
+                        ),
+                    });
+                }
+                b.iter().map(Some).collect()
+            }
+            None => (0..(messages.len() - revealed_msg_indices.len()))
+                .map(|_| None)
+                .collect::<Vec<Option<&'a FieldElement>>>(),
+        };
+
+        // Choose blinding for g_tilde randomly
+        blindings.insert(0, None);
+        Ok(blindings)
+    }
+
+    /// Transform signature to an aggregate signature on (messages, t)
+    pub(crate) fn transform_sig(sig: &Signature) -> (FieldElement, Signature) {
+        let r = FieldElement::random();
+        let t = FieldElement::random();
+
+        // Transform signature to an aggregate signature on (messages, t)
+        let sigma_prime_1 = &sig.sigma_1 * &r;
+        let sigma_prime_2 = (&sig.sigma_2 + (&sig.sigma_1 * &t)) * &r;
+
+        (t, Signature {
+            sigma_1: sigma_prime_1,
+            sigma_2: sigma_prime_2,
+        })
+    }
+
+    pub(crate) fn commit_for_pok(messages: Vec<FieldElement>, mut blindings: Vec<Option<&FieldElement>>, revealed_msg_indices: &HashSet<usize>,
+                                 t: FieldElement, vk: &Verkey, params: &Params) -> (FieldElementVector, VerkeyGroup, ProverCommittedOtherGroup) {
+        // +1 for `t`
+        let hidden_msg_count = vk.Y_tilde.len() - revealed_msg_indices.len() + 1;
+        let mut bases = VerkeyGroupVec::with_capacity(hidden_msg_count);
+        let mut exponents = FieldElementVector::with_capacity(hidden_msg_count);
+        bases.push(params.g_tilde.clone());
+        exponents.push(t);
+        for (i, msg) in messages.into_iter().enumerate() {
+            if revealed_msg_indices.contains(&i) {
+                continue;
+            }
+            bases.push(vk.Y_tilde[i].clone());
+            exponents.push(msg);
+        }
+
+        // Prove knowledge of m_1, m_2, ... for all hidden m_i and t in J = Y_tilde_1^m_1 * Y_tilde_2^m_2 * ..... * g_tilde^t
+        let J = bases.multi_scalar_mul_const_time(&exponents).unwrap();
+
+        // For proving knowledge of messages in J.
+        let mut committing = ProverCommittingOtherGroup::new();
+        for b in bases.as_slice() {
+            committing.commit(b, blindings.remove(0));
+        }
+        let committed = committing.finish();
+
+        (exponents, J, committed)
     }
 }
 
@@ -198,7 +226,7 @@ impl PoKOfSignatureProof {
         revealed_msgs: HashMap<usize, FieldElement>,
         challenge: &FieldElement,
     ) -> Result<bool, PSError> {
-        if self.sig.sigma_1.is_identity() || self.sig.sigma_2.is_identity() {
+        if self.sig.is_identity() {
             return Ok(false);
         }
 
@@ -291,11 +319,11 @@ mod tests {
         let params = Params::new("test".as_bytes());
         let (sk, vk) = keygen(count_msgs, &params);
 
-        let msgs = FieldElementVector::random(count_msgs);
+        let msgs = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
         let sig = Signature::new(msgs.as_slice(), &sk, &params).unwrap();
-        assert!(sig.verify(msgs.as_slice(), &vk, &params).unwrap());
+        assert!(sig.verify(msgs.clone(), &vk, &params).unwrap());
 
-        let pok = PoKOfSignature::init(&sig, &vk, &params, msgs.as_slice(), None, HashSet::new()).unwrap();
+        let pok = PoKOfSignature::init(&sig, &vk, &params, msgs.clone(), None, HashSet::new()).unwrap();
 
         let chal_prover = FieldElement::from_msg_hash(&pok.to_bytes());
 
@@ -313,7 +341,7 @@ mod tests {
             &sig,
             &vk,
             &params,
-            msgs.as_slice(),
+            msgs,
             Some(blindings.as_slice()),
             HashSet::new(),
         )
@@ -335,10 +363,10 @@ mod tests {
         let params = Params::new("test".as_bytes());
         let (sk, vk) = keygen(count_msgs, &params);
 
-        let msgs = FieldElementVector::random(count_msgs);
+        let msgs = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
 
         let sig = Signature::new(msgs.as_slice(), &sk, &params).unwrap();
-        assert!(sig.verify(msgs.as_slice(), &vk, &params).unwrap());
+        assert!(sig.verify(msgs.clone(), &vk, &params).unwrap());
 
         let mut revealed_msg_indices = HashSet::new();
         revealed_msg_indices.insert(2);
@@ -349,7 +377,7 @@ mod tests {
             &sig,
             &vk,
             &params,
-            msgs.as_slice(),
+            msgs.clone(),
             None,
             revealed_msg_indices.clone(),
         )
@@ -383,18 +411,18 @@ mod tests {
         let params = Params::new("test".as_bytes());
         let (sk, vk) = keygen(count_msgs, &params);
 
-        let msgs_1 = FieldElementVector::random(count_msgs);
+        let msgs_1 = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
         let sig_1 = Signature::new(msgs_1.as_slice(), &sk, &params).unwrap();
-        assert!(sig_1.verify(msgs_1.as_slice(), &vk, &params).unwrap());
+        assert!(sig_1.verify(msgs_1.clone(), &vk, &params).unwrap());
 
-        let msgs_2 = FieldElementVector::random(count_msgs);
+        let msgs_2 = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
         let sig_2 = Signature::new(msgs_2.as_slice(), &sk, &params).unwrap();
-        assert!(sig_2.verify(msgs_2.as_slice(), &vk, &params).unwrap());
+        assert!(sig_2.verify(msgs_2.clone(), &vk, &params).unwrap());
 
         let pok_1 =
-            PoKOfSignature::init(&sig_1, &vk, &params, msgs_1.as_slice(), None, HashSet::new()).unwrap();
+            PoKOfSignature::init(&sig_1, &vk, &params, msgs_1, None, HashSet::new()).unwrap();
         let pok_2 =
-            PoKOfSignature::init(&sig_2, &vk, &params, msgs_2.as_slice(), None, HashSet::new()).unwrap();
+            PoKOfSignature::init(&sig_2, &vk, &params, msgs_2, None, HashSet::new()).unwrap();
 
         let mut chal_bytes = vec![];
         chal_bytes.append(&mut pok_1.to_bytes());
@@ -430,15 +458,15 @@ mod tests {
         let (sk, vk) = keygen(count_msgs, &params);
 
         let same_msg = FieldElement::random();
-        let mut msgs_1 = FieldElementVector::random(count_msgs - 1);
+        let mut msgs_1 = (0..count_msgs-1).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
         msgs_1.insert(1, same_msg.clone());
         let sig_1 = Signature::new(msgs_1.as_slice(), &sk, &params).unwrap();
-        assert!(sig_1.verify(msgs_1.as_slice(), &vk, &params).unwrap());
+        assert!(sig_1.verify(msgs_1.clone(), &vk, &params).unwrap());
 
-        let mut msgs_2 = FieldElementVector::random(count_msgs - 1);
+        let mut msgs_2 = (0..count_msgs-1).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
         msgs_2.insert(4, same_msg.clone());
         let sig_2 = Signature::new(msgs_2.as_slice(), &sk, &params).unwrap();
-        assert!(sig_2.verify(msgs_2.as_slice(), &vk, &params).unwrap());
+        assert!(sig_2.verify(msgs_2.clone(), &vk, &params).unwrap());
 
         // A particular message is same
         assert_eq!(msgs_1[1], msgs_2[4]);
@@ -457,7 +485,7 @@ mod tests {
         let pok_1 = PoKOfSignature::init(
             &sig_1,
             &vk, &params,
-            msgs_1.as_slice(),
+            msgs_1,
             Some(blindings_1.as_slice()),
             HashSet::new(),
         )
@@ -465,7 +493,7 @@ mod tests {
         let pok_2 = PoKOfSignature::init(
             &sig_2,
             &vk, &params,
-            msgs_2.as_slice(),
+            msgs_2,
             Some(blindings_2.as_slice()),
             HashSet::new(),
         )
@@ -486,8 +514,15 @@ mod tests {
             proof_2.get_resp_for_message(4).unwrap()
         );
 
-        assert!(proof_1.verify(&vk, &params, HashMap::new(), &chal).unwrap());
-        assert!(proof_2.verify(&vk, &params, HashMap::new(), &chal).unwrap());
+        // The verifier generates the challenge on its own.
+        // The verifier generates the challenge on its own.
+        let mut chal_bytes = vec![];
+        chal_bytes.append(&mut proof_1.get_bytes_for_challenge(HashSet::new(), &vk, &params));
+        chal_bytes.append(&mut proof_2.get_bytes_for_challenge(HashSet::new(), &vk, &params));
+        let chal_verifier = FieldElement::from_msg_hash(&chal_bytes);
+
+        assert!(proof_1.verify(&vk, &params, HashMap::new(), &chal_verifier).unwrap());
+        assert!(proof_2.verify(&vk, &params, HashMap::new(), &chal_verifier).unwrap());
     }
 
     #[test]
@@ -498,7 +533,7 @@ mod tests {
         let params = Params::new("test".as_bytes());
         let (sk, vk) = keygen(count_msgs, &params);
 
-        let msgs = FieldElementVector::random(count_msgs);
+        let msgs = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
         let sig = Signature::new(msgs.as_slice(), &sk, &params).unwrap();
 
         let mut total_generating = Duration::new(0, 0);
@@ -508,7 +543,7 @@ mod tests {
             let start = Instant::now();
 
             let pok =
-                PoKOfSignature::init(&sig, &vk, &params, msgs.as_slice(), None, HashSet::new()).unwrap();
+                PoKOfSignature::init(&sig, &vk, &params, msgs.clone(), None, HashSet::new()).unwrap();
 
             let chal_prover = FieldElement::from_msg_hash(&pok.to_bytes());
 
@@ -519,6 +554,9 @@ mod tests {
             // The verifier generates the challenge on its own.
             let chal_bytes = proof.get_bytes_for_challenge(HashSet::new(), &vk, &params);
             let chal_verifier = FieldElement::from_msg_hash(&chal_bytes);
+
+            assert!(proof.verify(&vk, &params, HashMap::new(), &chal_verifier).unwrap());
+
             total_verifying += start.elapsed();
         }
 

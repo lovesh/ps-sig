@@ -1,4 +1,4 @@
-// Scheme defined in section 6.1 supporting blind signatures
+// Scheme defined in in 2016 paper, CT-RSA 2016 (eprint 2015/525), section 6.1 supporting blind signatures
 
 use crate::errors::PSError;
 use crate::keys::{Params, Sigkey, Verkey};
@@ -160,7 +160,7 @@ mod tests {
 
             let sig_blinded = BlindSignature::new(&comm, &[], &sk, &blinding_key, &params).unwrap();
             let sig_unblinded = BlindSignature::unblind(&sig_blinded, &blinding);
-            assert!(sig_unblinded.verify(&[msg], &vk, &params).unwrap());
+            assert!(sig_unblinded.verify(vec![msg], &vk, &params).unwrap());
         }
     }
 
@@ -172,7 +172,7 @@ mod tests {
             let (sk, vk) = keygen(count_msgs, &params);
 
             let blinding_key = BlindingKey::new(&sk, &params);
-            let msgs = FieldElementVector::random(count_msgs);
+            let msgs = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
             let blinding = FieldElement::random();
 
             // XXX: In production always use multi-scalar multiplication
@@ -183,7 +183,7 @@ mod tests {
             comm += (&params.g * &blinding);
             let sig_blinded = BlindSignature::new(&comm, &[], &sk, &blinding_key, &params).unwrap();
             let sig_unblinded = BlindSignature::unblind(&sig_blinded, &blinding);
-            assert!(sig_unblinded.verify(msgs.as_slice(), &vk, &params).unwrap());
+            assert!(sig_unblinded.verify(msgs, &vk, &params).unwrap());
         }
     }
 
@@ -196,7 +196,7 @@ mod tests {
             let (sk, vk) = keygen(count_msgs, &params);
 
             let blinding_key = BlindingKey::new(&sk, &params);
-            let msgs = FieldElementVector::random(count_msgs);
+            let msgs = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
             let blinding = FieldElement::random();
 
             // XXX: In production always use multi-scalar multiplication
@@ -215,7 +215,7 @@ mod tests {
             )
             .unwrap();
             let sig_unblinded = BlindSignature::unblind(&sig_blinded, &blinding);
-            assert!(sig_unblinded.verify(msgs.as_slice(), &vk, &params).unwrap());
+            assert!(sig_unblinded.verify(msgs, &vk, &params).unwrap());
         }
     }
 
@@ -228,7 +228,7 @@ mod tests {
         let sk_X = &params.g * &sk.x;
 
         let blinding_key = BlindingKey::new(&sk, &params);
-        let msgs = FieldElementVector::random(count_msgs);
+        let msgs = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
         let blinding = FieldElement::random();
 
         // User commits to messages
@@ -273,7 +273,7 @@ mod tests {
         )
             .unwrap();
         let sig_unblinded = BlindSignature::unblind(&sig_blinded, &blinding);
-        assert!(sig_unblinded.verify(msgs.as_slice(), &vk, &params).unwrap());
+        assert!(sig_unblinded.verify(msgs.clone(), &vk, &params).unwrap());
 
         let sig_blinded_paper = BlindSignature::new_from_paper(
             &comm,
@@ -284,7 +284,7 @@ mod tests {
         )
             .unwrap();
         let sig_unblinded_paper = BlindSignature::unblind(&sig_blinded_paper, &blinding);
-        assert!(sig_unblinded_paper.verify(msgs.as_slice(), &vk, &params).unwrap());
+        assert!(sig_unblinded_paper.verify(msgs, &vk, &params).unwrap());
     }
 
     #[test]
@@ -302,7 +302,7 @@ mod tests {
         let mut total_signing = Duration::new(0, 0);
         let mut total_verifying = Duration::new(0, 0);
         for _ in 0..iterations {
-            let msgs = FieldElementVector::random(count_msgs);
+            let msgs = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
             let blinding = FieldElement::random();
             // XXX: In production always use multi-scalar multiplication
             let mut comm = SignatureGroup::new();
@@ -324,7 +324,7 @@ mod tests {
 
             let start = Instant::now();
             let sig_unblinded = BlindSignature::unblind(&sig_blinded, &blinding);
-            assert!(sig_unblinded.verify(msgs.as_slice(), &vk, &params).unwrap());
+            assert!(sig_unblinded.verify(msgs, &vk, &params).unwrap());
             total_verifying += start.elapsed();
         }
 
@@ -354,7 +354,7 @@ mod tests {
         let mut total_signing_paper = Duration::new(0, 0);
         let mut total_verifying = Duration::new(0, 0);
         for _ in 0..iterations {
-            let msgs = FieldElementVector::random(count_msgs);
+            let msgs = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
             let blinding = FieldElement::random();
             // XXX: In production always use multi-scalar multiplication
             let mut comm = SignatureGroup::new();
@@ -387,11 +387,11 @@ mod tests {
 
             let start = Instant::now();
             let sig_unblinded = BlindSignature::unblind(&sig_blinded, &blinding);
-            assert!(sig_unblinded.verify(msgs.as_slice(), &vk, &params).unwrap());
+            assert!(sig_unblinded.verify(msgs.clone(), &vk, &params).unwrap());
             total_verifying += start.elapsed();
 
             let sig_unblinded_paper = BlindSignature::unblind(&sig_blinded_paper, &blinding);
-            assert!(sig_unblinded_paper.verify(msgs.as_slice(), &vk, &params).unwrap());
+            assert!(sig_unblinded_paper.verify(msgs, &vk, &params).unwrap());
         }
 
         println!(

@@ -17,7 +17,7 @@ fn test_scenario_1() {
     let (sk, vk) = keygen(count_msgs, &params);
 
     let blinding_key = BlindingKey::new(&sk, &params);
-    let msgs = FieldElementVector::random(count_msgs);
+    let msgs = (0..count_msgs).map(|_| FieldElement::random()).collect::<Vec<FieldElement>>();
     let blinding = FieldElement::random();
 
     // User commits to some messages
@@ -64,7 +64,7 @@ fn test_scenario_1() {
     )
     .unwrap();
     let sig_unblinded = BlindSignature::unblind(&sig_blinded, &blinding);
-    assert!(sig_unblinded.verify(msgs.as_slice(), &vk, &params).unwrap());
+    assert!(sig_unblinded.verify(msgs.clone(), &vk, &params).unwrap());
 
     // Do a proof of knowledge of the signature and also reveal some of the messages.
     let mut revealed_msg_indices = HashSet::new();
@@ -75,7 +75,7 @@ fn test_scenario_1() {
     let pok = PoKOfSignature::init(
         &sig_unblinded,
         &vk, &params,
-        msgs.as_slice(),
+        msgs.clone(),
         None,
         revealed_msg_indices.clone(),
     )
