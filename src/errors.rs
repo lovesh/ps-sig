@@ -1,29 +1,27 @@
-use failure::Error;
+#[cfg(not(feature = "std"))]
+use alloc::string::String;
 
-#[derive(Debug, Fail)]
+use thiserror::Error;
+
+#[derive(Debug, Error)]
 pub enum PSError {
-    #[fail(
-        display = "Verkey valid for {} messages but given {} messages",
-        expected, given
-    )]
+    #[error("Verkey valid for {expected} messages but given {given} messages")]
     UnsupportedNoOfMessages { expected: usize, given: usize },
 
-    #[fail(
-        display = "Same no of bases and exponents required. {} bases and {} exponents",
-        bases, exponents
-    )]
+    #[error("Same no of bases and exponents required. {bases} bases and {exponents} exponents")]
     UnequalNoOfBasesExponents { bases: usize, exponents: usize },
 
-    #[fail(
-    display = "All verification keys should have equal number of Y_tilde elements"
-    )]
+    #[error("All verification keys should have equal number of Y_tilde elements")]
     IncompatibleVerkeysForAggregation,
 
-    #[fail(
-    display = "All signatures should have same first element (sigma_1). m' should be same as well if using 2018 scheme"
+    #[error(
+        "All signatures should have same first element (sigma_1). m' should be same as well if using 2018 scheme"
     )]
     IncompatibleSigsForAggregation,
 
-    #[fail(display = "Error with message {:?}", msg)]
+    #[error("Error with message {msg:?}")]
     GeneralError { msg: String },
+
+    #[error("Serialization error")]
+    SerializationError,
 }

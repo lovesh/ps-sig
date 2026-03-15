@@ -53,29 +53,84 @@ The code for this lives in signature_2018.rs and pok_sig_2018.rs. For generating
 of signature is same as the CT-RSA 2016 paper, there is a lot of code reuse. Currently there is no implementation of blind signature using this 
 new scheme but it can be done by using the ideas from Coconut where the committed attributes are individually committed using Elgamal encryption.
 
-### Implementation details
+Blind signatures are currently implemented and tested only for the 2016 scheme.
 
-The groups for public key (*_tilde) and signatures can be swapped by compiling with feature `SignatureG2` or `SignatureG1`. 
-These features are mutually exclusive. The default feature is `SignatureG2` meaning signatures are in group G2 which 
-makes signing slower but proof of knowledge of signature faster.  
+## Implementation Details
 
-To run tests with signature in group G1. The proof of knowledge of signatures will involve a multi-exponentiation in group G2.
-```
-cargo test --release --no-default-features --features SignatureG1
+This library uses the [arkworks](https://arkworks.rs/) ecosystem for elliptic curve operations and supports:
+- **no_std environments** (embedded systems, WASM)
+- **Multiple pairing-friendly curves** (BLS12-381, BLS12-377, BN254)
+- **Serialization** using arkworks' canonical serialization
+
+### Curve Selection
+
+The library is generic over pairing-friendly curves. In tests and examples, we use:
+- `ark_bls12_381::Bls12_381` (recommended for production use)
+- `ark_bls12_377::Bls12_377`
+- `ark_bn254::Bn254`
+
+All implementations use the standard convention:
+- **G1** for signatures (shorter, faster signing)
+- **G2** for verification keys (faster verification via multi-exponentiation in G1)
+
+### Usage Example
+
+```rust
+use ark_bls12_381::Bls12_381;
+use ps_sig::keys::{keygen, Params};
+use ps_sig::signature::Signature;
+use sha2::Sha256;
+use ark_std::test_rng;
+
+// Generate parameters
+let params = Params::<Bls12_381>::new::<Sha256>(b"my-domain");
+
+// Generate keys for 5 messages
+let (sigkey, verkey) = keygen(5, &params, &mut test_rng());
+
+// Sign messages
+let sig = Signature::new(&messages, &sigkey, &params, &mut test_rng())?;
+
+// Verify
+assert!(sig.verify(&messages, &verkey, &params)?);
 ```
 
-To run tests with signature in group G2. The proof of knowledge of signatures will involve a multi-exponentiation in group G1.
-```
-cargo test --release --no-default-features --features SignatureG2
+### Running Tests
+
+Run all tests with default features (std):
+```bash
+cargo test --release
 ```
 
-To benchmark, run tests prefixed with `timing` and the time taken for various actions will be printed.
-```
-cargo test --release --no-default-features --features SignatureG2 timing -- --nocapture
+Run tests for no_std:
+```bash
+cargo test --release --no-default-features
 ```
 
-or 
+Build for WASM:
+```bash
+cargo build --release --no-default-features --target wasm32-unknown-unknown
 ```
-cargo test --release --no-default-features --features SignatureG1 timing -- --nocapture
+
+### Test Vectors
+
+Test vectors are stored in `tests/data` and `tests/data/2018`.
+
+Verification tests (read existing vectors, do not generate):
+```bash
+cargo test verify_with_test_vectors
+cargo test verify_with_test_vectors_2018
+cargo test verify_blind_signature_with_test_vectors
 ```
+
+Generation tests (ignored by default, run explicitly when updating vectors):
+```bash
+cargo test generate_test_vectors -- --ignored
+cargo test generate_test_vectors_2018 -- --ignored
+cargo test generate_blind_signature_test_vectors -- --ignored
+```
+
+### Features
+
+- `std` (default): Enables standard library support
 

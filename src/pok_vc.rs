@@ -1,283 +1,281 @@
-// Proof of knowledge of committed values in a vector Pedersen commitment.
+//! Proof of knowledge of committed values in a vector Pedersen commitment.
+//! `ProverCommitting` will contains vectors of generators and random values.
+//! `ProverCommitting` has a `commit` method that optionally takes a value as blinding, if not provided, it creates its own.
+//! `ProverCommitting` has a `finish` method that results in creation of `ProverCommitted` object after consuming `ProverCommitting`
+//! `ProverCommitted` marks the end of commitment phase and has the final commitment.
+//! `ProverCommitted` has a method to generate the challenge by hashing all generators and commitment. It is optional
+//! to use this method as the challenge may come from a super-protocol or from verifier. It takes a vector of bytes that it includes for hashing for computing the challenge
+//! `ProverCommitted` has a method `gen_proof` to generate proof. It takes the secrets and the challenge to generate responses.
+//! During response generation `ProverCommitted` is consumed to create `Proof` object containing the commitments and responses.
+//! `Proof` can then be verified by the verifier.
 
-// `ProverCommitting` will contains vectors of generators and random values.
-// `ProverCommitting` has a `commit` method that optionally takes a value as blinding, if not provided, it creates its own.
-// `ProverCommitting` has a `finish` method that results in creation of `ProverCommitted` object after consuming `ProverCommitting`
-// `ProverCommitted` marks the end of commitment phase and has the final commitment.
-// `ProverCommitted` has a method to generate the challenge by hashing all generators and commitment. It is optional
-// to use this method as the challenge may come from a super-protocol or from verifier. It takes a vector of bytes that it includes for hashing for computing the challenge
-// `ProverCommitted` has a method `gen_proof` to generate proof. It takes the secrets and the challenge to generate responses.
-// During response generation `ProverCommitted` is consumed to create `Proof` object containing the commitments and responses.
-// `Proof` can then be verified by the verifier.
+#[cfg(not(feature = "std"))]
+use alloc::{format, string::String, vec, vec::Vec};
 
-/*pub struct ProverCommitting<'a, T: GroupElement> {
-    gens: Vec<&'a T>,
-    blindings: Vec<FieldElement>,
+use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ff::Zero;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::UniformRand;
+use digest::Digest;
+use rand_core::CryptoRngCore;
+
+use crate::errors::PSError;
+
+/// Proof of knowledge of messages in a vector commitment.
+/// Commit for each message.
+#[derive(Clone, Debug)]
+pub struct ProverCommitting<G>
+where
+    G: AffineRepr + CanonicalSerialize + CanonicalDeserialize + Copy,
+{
+    gens: Vec<G>,
+    blindings: Vec<G::ScalarField>,
 }
 
-pub struct ProverCommitted<'a, T: GroupElement> {
-    gens: Vec<&'a T>,
-    blindings: Vec<FieldElement>,
-    commitment: T
+/// Receive or generate challenge. Compute response and proof
+#[derive(Clone, Debug)]
+pub struct ProverCommitted<G>
+where
+    G: AffineRepr + CanonicalSerialize + CanonicalDeserialize + Copy,
+{
+    gens: Vec<G>,
+    blindings: Vec<G::ScalarField>,
+    commitment: G,
 }
 
-impl<'a, T> ProverCommitting<'a, T> where T: GroupElement {
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct Proof<G>
+where
+    G: AffineRepr + CanonicalSerialize + CanonicalDeserialize + Copy,
+{
+    pub commitment: G,
+    pub responses: Vec<G::ScalarField>,
+}
+
+impl<G> Default for ProverCommitting<G>
+where
+    G: AffineRepr + CanonicalSerialize + CanonicalDeserialize + Copy,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<G> ProverCommitting<G>
+where
+    G: AffineRepr + CanonicalSerialize + CanonicalDeserialize + Copy,
+{
     pub fn new() -> Self {
         Self {
-            gens: vec![],
-            blindings: vec![],
+            gens: Vec::new(),
+            blindings: Vec::new(),
         }
     }
 
-    pub fn commit(&mut self, gen: &'a T, blinding: Option<FieldElement>) -> usize {
-        let blinding = match blinding {
-            Some(b) => b,
-            None => FieldElement::random()
-        };
+    /// Commit with an explicit blinding value
+    pub fn commit(&mut self, gen: G, blinding: G::ScalarField) -> usize {
         let idx = self.gens.len();
         self.gens.push(gen);
         self.blindings.push(blinding);
         idx
     }
 
-    pub fn finish(self) -> ProverCommitted<'a, T> {
-        // XXX: Need multi-scalar multiplication to be implemented for GroupElementVector.
-        // XXX: Also implement operator overloading for GroupElement.
-        unimplemented!()
+    /// Commit with a randomly generated blinding value
+    pub fn commit_random<R: CryptoRngCore>(&mut self, gen: G, rng: &mut R) -> usize {
+        let blinding = G::ScalarField::rand(rng);
+        self.commit(gen, blinding)
     }
 
-    pub fn get_index(&self, idx: usize) -> Result<(&'a T, &FieldElement), PSError> {
+    /// Add pairwise product of (`self.gens`, self.blindings). Uses multi-exponentiation (const-time).
+    pub fn finish(self) -> ProverCommitted<G> {
+        let commitment =
+            <G::Group as VariableBaseMSM>::msm_unchecked(&self.gens, &self.blindings).into_affine();
+        ProverCommitted {
+            gens: self.gens,
+            blindings: self.blindings,
+            commitment,
+        }
+    }
+
+    pub fn get_index(&self, idx: usize) -> Result<(&G, &G::ScalarField), PSError> {
         if idx >= self.gens.len() {
-            return Err(PSError::GeneralError { msg: format!("index {} greater than size {}", idx, self.gens.len()) });
+            return Err(PSError::GeneralError {
+                msg: format!("index {} greater than size {}", idx, self.gens.len()),
+            });
         }
-        Ok((self.gens[idx], &self.blindings[idx]))
+        Ok((&self.gens[idx], &self.blindings[idx]))
     }
-}*/
-
-#[macro_export]
-macro_rules! impl_PoK_VC {
-    ( $ProverCommitting:ident, $ProverCommitted:ident, $Proof:ident, $group_element:ident, $group_element_vec:ident ) => {
-        /// Proof of knowledge of messages in a vector commitment.
-        /// Commit for each message.
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct $ProverCommitting {
-            gens: $group_element_vec,
-            blindings: FieldElementVector,
-        }
-
-        /// Receive or generate challenge. Compute response and proof
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct $ProverCommitted {
-            gens: $group_element_vec,
-            blindings: FieldElementVector,
-            commitment: $group_element,
-        }
-
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct $Proof {
-            pub commitment: $group_element,
-            pub responses: FieldElementVector,
-        }
-
-        impl $ProverCommitting {
-            pub fn new() -> Self {
-                Self {
-                    gens: $group_element_vec::new(0),
-                    blindings: FieldElementVector::new(0),
-                }
-            }
-
-            /// generate a new random blinding if None provided
-            pub fn commit(
-                &mut self,
-                gen: &$group_element,
-                blinding: Option<&FieldElement>,
-            ) -> usize {
-                let blinding = match blinding {
-                    Some(b) => b.clone(),
-                    None => FieldElement::random(),
-                };
-                let idx = self.gens.len();
-                self.gens.push(gen.clone());
-                self.blindings.push(blinding);
-                idx
-            }
-
-            /// Add pairwise product of (`self.gens`, self.blindings). Uses multi-exponentiation.
-            pub fn finish(self) -> $ProverCommitted {
-                let commitment = self
-                    .gens
-                    .multi_scalar_mul_const_time(&self.blindings)
-                    .unwrap();
-                $ProverCommitted {
-                    gens: self.gens,
-                    blindings: self.blindings,
-                    commitment,
-                }
-            }
-
-            pub fn get_index(
-                &self,
-                idx: usize,
-            ) -> Result<(&$group_element, &FieldElement), PSError> {
-                if idx >= self.gens.len() {
-                    return Err(PSError::GeneralError {
-                        msg: format!("index {} greater than size {}", idx, self.gens.len()),
-                    });
-                }
-                Ok((&self.gens[idx], &self.blindings[idx]))
-            }
-        }
-
-        impl $ProverCommitted {
-            pub fn to_bytes(&self) -> Vec<u8> {
-                let mut bytes = vec![];
-                for b in self.gens.as_slice() {
-                    bytes.append(&mut b.to_bytes());
-                }
-                bytes.append(&mut self.commitment.to_bytes());
-                bytes
-            }
-
-            /// This step will be done by the main protocol for which this PoK is a sub-protocol
-            pub fn gen_challenge(&self, mut extra: Vec<u8>) -> FieldElement {
-                let mut bytes = self.to_bytes();
-                bytes.append(&mut extra);
-                FieldElement::from_msg_hash(&bytes)
-            }
-
-            /// For each secret, generate a response as self.blinding[i] - challenge*secrets[i].
-            pub fn gen_proof(
-                self,
-                challenge: &FieldElement,
-                secrets: &[FieldElement],
-            ) -> Result<$Proof, PSError> {
-                if secrets.len() != self.gens.len() {
-                    return Err(PSError::UnequalNoOfBasesExponents {
-                        bases: self.gens.len(),
-                        exponents: secrets.len(),
-                    });
-                }
-                let mut responses = FieldElementVector::with_capacity(self.gens.len());
-                for i in 0..self.gens.len() {
-                    responses.push(&self.blindings[i] - (challenge * &secrets[i]));
-                }
-                Ok($Proof {
-                    commitment: self.commitment,
-                    responses,
-                })
-            }
-        }
-
-        impl $Proof {
-            /// Verify that bases[0]^responses[0] * bases[0]^responses[0] * ... bases[i]^responses[i] * commitment^challenge == random_commitment
-            pub fn verify(
-                &self,
-                bases: &[$group_element],
-                commitment: &$group_element,
-                challenge: &FieldElement,
-            ) -> Result<bool, PSError> {
-                // bases[0]^responses[0] * bases[0]^responses[0] * ... bases[i]^responses[i] * commitment^challenge == random_commitment
-                // =>
-                // bases[0]^responses[0] * bases[0]^responses[0] * ... bases[i]^responses[i] * commitment^challenge * random_commitment^-1 == 1
-                if bases.len() != self.responses.len() {
-                    return Err(PSError::UnequalNoOfBasesExponents {
-                        bases: bases.len(),
-                        exponents: self.responses.len(),
-                    });
-                }
-                let mut points = $group_element_vec::from(bases);
-                let mut scalars = self.responses.clone();
-                points.push(commitment.clone());
-                scalars.push(challenge.clone());
-                let pr = points.multi_scalar_mul_var_time(&scalars).unwrap() - &self.commitment;
-                Ok(pr.is_identity())
-            }
-        }
-    };
 }
 
-#[cfg(test)]
-#[macro_export]
-macro_rules! test_PoK_VC {
-    ( $n:ident, $ProverCommitting:ident, $ProverCommitted:ident, $Proof:ident, $group_element:ident, $group_element_vec:ident ) => {
-        let mut gens = $group_element_vec::with_capacity($n);
-        let mut secrets = FieldElementVector::with_capacity($n);
-        let mut commiting = $ProverCommitting::new();
-        for _ in 0..$n - 1 {
-            let g = $group_element::random();
-            commiting.commit(&g, None);
-            gens.push(g);
-            secrets.push(FieldElement::random());
+impl<G> ProverCommitted<G>
+where
+    G: AffineRepr + CanonicalSerialize + CanonicalDeserialize + Copy,
+{
+    pub fn to_bytes(&self) -> Result<Vec<u8>, PSError> {
+        let mut bytes = Vec::new();
+        for g in &self.gens {
+            g.serialize_compressed(&mut bytes)
+                .map_err(|_| PSError::SerializationError)?;
         }
+        self.commitment
+            .serialize_compressed(&mut bytes)
+            .map_err(|_| PSError::SerializationError)?;
+        Ok(bytes)
+    }
 
-        // Add one of the blindings externally
-        let g = $group_element::random();
-        let r = FieldElement::random();
-        commiting.commit(&g, Some(&r));
-        let (g_, r_) = commiting.get_index($n - 1).unwrap();
-        assert_eq!(g, *g_);
-        assert_eq!(r, *r_);
-        gens.push(g);
-        secrets.push(FieldElement::random());
+    /// This step will be done by the main protocol for which this PoK is a sub-protocol
+    pub fn gen_challenge<H: Digest>(&self, extra: &[u8]) -> Result<G::ScalarField, PSError> {
+        let mut hasher = H::new();
+        let bytes = self.to_bytes()?;
+        hasher.update(&bytes);
+        hasher.update(extra);
+        let hash = hasher.finalize();
 
-        let committed = commiting.finish();
-        let commitment = gens.multi_scalar_mul_const_time(&secrets).unwrap();
-        let challenge = committed.gen_challenge(commitment.to_bytes());
-        let proof = committed.gen_proof(&challenge, secrets.as_slice()).unwrap();
+        // Use hash output as seed for deterministic field element
+        let mut seed = [0u8; 32];
+        let hash_bytes = hash.as_slice();
+        let copy_len = core::cmp::min(hash_bytes.len(), 32);
+        seed[..copy_len].copy_from_slice(&hash_bytes[..copy_len]);
 
-        assert!(proof
-            .verify(gens.as_slice(), &commitment, &challenge)
-            .unwrap());
-        // Wrong challenge or commitment fails to verify
-        assert!(!proof
-            .verify(gens.as_slice(), &$group_element::random(), &challenge)
-            .unwrap());
-        assert!(!proof
-            .verify(gens.as_slice(), &commitment, &FieldElement::random())
-            .unwrap());
-    };
+        let mut rng = crate::deterministic_rng_from_seed(seed);
+        Ok(G::ScalarField::rand(&mut rng))
+    }
+
+    /// Generate a challenge by hashing the given bytes directly (no commitment bytes prepended).
+    pub fn gen_challenge_from_bytes<H: Digest>(bytes: &[u8]) -> Result<G::ScalarField, PSError> {
+        let mut hasher = H::new();
+        hasher.update(bytes);
+        let hash = hasher.finalize();
+
+        let mut seed = [0u8; 32];
+        let hash_bytes = hash.as_slice();
+        let copy_len = core::cmp::min(hash_bytes.len(), 32);
+        seed[..copy_len].copy_from_slice(&hash_bytes[..copy_len]);
+
+        let mut rng = crate::deterministic_rng_from_seed(seed);
+        Ok(G::ScalarField::rand(&mut rng))
+    }
+
+    /// For each secret, generate a response as self.blinding[i] - challenge*secrets[i].
+    pub fn gen_proof(
+        self,
+        challenge: G::ScalarField,
+        secrets: &[G::ScalarField],
+    ) -> Result<Proof<G>, PSError> {
+        if secrets.len() != self.gens.len() {
+            return Err(PSError::UnequalNoOfBasesExponents {
+                bases: self.gens.len(),
+                exponents: secrets.len(),
+            });
+        }
+        let mut responses = Vec::with_capacity(self.gens.len());
+        for i in 0..self.gens.len() {
+            responses.push(self.blindings[i] - (challenge * secrets[i]));
+        }
+        Ok(Proof {
+            commitment: self.commitment,
+            responses,
+        })
+    }
+}
+
+impl<G> Proof<G>
+where
+    G: AffineRepr + CanonicalSerialize + CanonicalDeserialize + Copy,
+{
+    /// Verify that bases[0]^responses[0] * bases[1]^responses[1] * ... bases[i]^responses[i] * commitment^challenge == random_commitment
+    pub fn verify(
+        &self,
+        bases: &[G],
+        commitment: G,
+        challenge: G::ScalarField,
+    ) -> Result<bool, PSError> {
+        // bases[0]^responses[0] * bases[1]^responses[1] * ... bases[i]^responses[i] * commitment^challenge == random_commitment
+        // =>
+        // bases[0]^responses[0] * bases[1]^responses[1] * ... bases[i]^responses[i] * commitment^challenge - random_commitment == 0
+        if bases.len() != self.responses.len() {
+            return Err(PSError::UnequalNoOfBasesExponents {
+                bases: bases.len(),
+                exponents: self.responses.len(),
+            });
+        }
+        let mut points = bases.to_vec();
+        let mut scalars = self.responses.clone();
+        points.push(commitment);
+        scalars.push(challenge);
+        let pr = <G::Group as VariableBaseMSM>::msm_unchecked(&points, &scalars)
+            - self.commitment.into_group();
+        Ok(pr.is_zero())
+    }
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    // XXX: Error for VC should be independent of PS
-    use crate::errors::PSError;
-    use amcl_wrapper::field_elem::{FieldElement, FieldElementVector};
-    use amcl_wrapper::group_elem::{GroupElement, GroupElementVector};
-    use amcl_wrapper::group_elem_g1::{G1Vector, G1};
-    use amcl_wrapper::group_elem_g2::{G2Vector, G2};
+    use ark_bls12_381::{G1Affine, G2Affine};
+    use ark_ec::VariableBaseMSM;
+
+    use sha2::Sha256;
+
+    pub(crate) fn test_pok_vc<G, H>(n: usize)
+    where
+        G: ark_ec::AffineRepr,
+        H: digest::Digest,
+    {
+        use ark_ec::CurveGroup;
+        use ark_std::rand::{rngs::StdRng, SeedableRng};
+        use ark_std::UniformRand;
+
+        let mut rng = StdRng::seed_from_u64(0u64);
+        let mut rng2 = StdRng::seed_from_u64(1u64);
+
+        let mut gens = Vec::with_capacity(n);
+        let mut secrets = Vec::with_capacity(n);
+        let mut committing = ProverCommitting::<G>::new();
+        for _ in 0..n - 1 {
+            let g = G::Group::rand(&mut rng).into_affine();
+            committing.commit_random(g, &mut rng);
+            gens.push(g);
+            secrets.push(G::ScalarField::rand(&mut rng));
+        }
+
+        // Add one of the blindings externally
+        let g = G::Group::rand(&mut rng).into_affine();
+        let r = G::ScalarField::rand(&mut rng);
+        committing.commit(g, r);
+        let (g_, r_) = committing.get_index(n - 1).unwrap();
+        assert_eq!(g, *g_);
+        assert_eq!(r, *r_);
+        gens.push(g);
+        secrets.push(G::ScalarField::rand(&mut rng));
+
+        let committed = committing.finish();
+
+        let commitment = G::Group::msm_unchecked(&gens, &secrets).into_affine();
+        let mut commitment_bytes = Vec::new();
+        ark_serialize::CanonicalSerialize::serialize_compressed(&commitment, &mut commitment_bytes)
+            .unwrap();
+        let challenge = committed.gen_challenge::<H>(&commitment_bytes).unwrap();
+        let proof = committed.gen_proof(challenge, &secrets).unwrap();
+
+        assert!(proof.verify(&gens, commitment, challenge).unwrap());
+        assert!(!proof
+            .verify(&gens, G::Group::rand(&mut rng2).into_affine(), challenge)
+            .unwrap());
+        assert!(!proof
+            .verify(&gens, commitment, G::ScalarField::rand(&mut rng2))
+            .unwrap());
+    }
 
     #[test]
     fn test_PoK_VC_G1() {
         // Proof of knowledge of committed values in a vector commitment. The committment lies in group G1.
-        impl_PoK_VC!(ProverCommittingG1, ProverCommittedG1, ProofG1, G1, G1Vector);
-
-        let n = 5;
-        test_PoK_VC!(
-            n,
-            ProverCommittingG1,
-            ProverCommittedG1,
-            ProofG1,
-            G1,
-            G1Vector
-        );
+        test_pok_vc::<G1Affine, Sha256>(5);
     }
 
     #[test]
     fn test_PoK_VC_G2() {
         // Proof of knowledge of committed values in a vector commitment. The committment lies in group G2.
-        impl_PoK_VC!(ProverCommittingG2, ProverCommittedG2, ProofG2, G2, G2Vector);
-
-        let n = 5;
-        test_PoK_VC!(
-            n,
-            ProverCommittingG2,
-            ProverCommittedG2,
-            ProofG2,
-            G2,
-            G2Vector
-        );
+        test_pok_vc::<G2Affine, Sha256>(5);
     }
 }
